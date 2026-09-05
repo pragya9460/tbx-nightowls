@@ -1,0 +1,2 @@
+# Preserve dataset bytes and source SHA-256 hashes across platforms.
+dataset/extended_v1/** -text

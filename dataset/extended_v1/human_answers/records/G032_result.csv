@@ -1,0 +1,2 @@
+﻿case_id,reason_code,expected_minor,observed_minor,matched_minor
+REC-MISMATCH,amount_mismatch,1000000,990000,990000

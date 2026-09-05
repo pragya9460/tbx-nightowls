@@ -1,0 +1,3 @@
+﻿case_id,reason_code,expected_minor,observed_minor,matched_minor
+REC-MISSING-BANK,missing_bank_record,170000,0,0
+REC-UNEXPECTED,unexpected_bank_debit,0,230000,0

@@ -1,0 +1,8 @@
+{
+  "source_commit": "faf509c18d99be00c205567c16a8ec6fb6f67eaa",
+  "source_golden_sha256": "ee7b3526544d1474136de0eed97539d07e58c62417160ba111a7f1f700545db0",
+  "case_count": 80,
+  "sql_results_and_evidence_rechecked": 65,
+  "percentage_decrease_july_to_august": "17.38",
+  "note": "Prose is curated and formatted for UI; no assistant accuracy score is claimed."
+}

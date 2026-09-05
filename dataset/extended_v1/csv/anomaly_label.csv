@@ -1,0 +1,2 @@
+label_id,payout_id,label,rule,baseline_payout_ids
+ANOM-CLOUD,PAY-CLOUD-OUTLIER,unusually_large,amount > 5 * median of the six listed July baseline payouts,"[""PAY-CLOUD-HISTORY-1"", ""PAY-CLOUD-HISTORY-2"", ""PAY-CLOUD-HISTORY-3"", ""PAY-CLOUD-HISTORY-4"", ""PAY-CLOUD-HISTORY-5"", ""PAY-CLOUD-HISTORY-6""]"

@@ -1,0 +1,3 @@
+﻿case_id,reason_code,expected_minor,observed_minor,matched_minor
+REC-PENDING,future_settlement,80000,0,0
+REC-PROCESSING,future_settlement,90000,0,0

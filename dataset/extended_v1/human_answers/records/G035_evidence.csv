@@ -1,0 +1,6 @@
+﻿case_id,status,reason_code,as_of_date,review_note,expected_minor,observed_minor,matched_minor
+REC-AMBIG,ambiguous,multiple_candidates,2026-09-05,Synthetic adjudication: multiple_candidates,1100000,550000,0
+REC-DUPLICATE,ambiguous,possible_duplicate,2026-09-05,Synthetic adjudication: possible_duplicate,120000,240000,0
+REC-MISMATCH,discrepancy,amount_mismatch,2026-09-05,Synthetic adjudication: amount_mismatch,1000000,990000,990000
+REC-MISSING-BANK,unreconciled,missing_bank_record,2026-09-05,Synthetic adjudication: missing_bank_record,170000,0,0
+REC-UNEXPECTED,unreconciled,unexpected_bank_debit,2026-09-05,Synthetic adjudication: unexpected_bank_debit,0,230000,0

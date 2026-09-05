@@ -1,0 +1,3 @@
+﻿case_id,reason_code,expected_minor,observed_minor,matched_minor
+REC-AMBIG,multiple_candidates,1100000,550000,0
+REC-DUPLICATE,possible_duplicate,120000,240000,0

@@ -1,5 +1,19 @@
 # Artha — a Finance Assistant That Actually Understands You
 
+## Extended finance dataset and golden answers
+
+The original 20,000-transaction CSV dataset is in [`dataset/`](dataset/). The [extended dataset](dataset/extended_v1/README.md) adds explicitly synthetic vendors, invoices, payouts, and reconciliation scenarios, plus 80 golden evaluation questions.
+
+- [SQLite database](dataset/extended_v1/finance.sqlite) and [CSV tables](dataset/extended_v1/csv/)
+- [80 human-facing questions and expected answers](dataset/extended_v1/human_answers/golden_human_answers.md)
+- [Machine-readable golden cases](dataset/extended_v1/golden_cases.json)
+- [Data dictionary](dataset/extended_v1/DATA_DICTIONARY.md) and [coverage and limits](dataset/extended_v1/COVERAGE.md)
+
+Run `python dataset/extended_v1/validate.py` to validate the package. It passed 171 checks and 65 reference-query replays. These results do not measure assistant accuracy or 20-million-row performance.
+
+The extended dataset is a standalone evaluation fixture. The current application described below still uses its existing bank/account/transaction model and loader; this merge does not add backend support for the extension's vendor, invoice, payout or reconciliation tables. Its golden answers apply only when querying the extended fixture under its documented conventions.
+
+
 **TBX × BVP Tech Catalyst Hackathon.** Artha is a finance Q&A assistant over
 real bank data where the LLM's only job is to map a natural-language question
 to a **validated structured query**. Every financial number is computed

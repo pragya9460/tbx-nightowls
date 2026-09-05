@@ -1,0 +1,3 @@
+refund_id,payout_id,transaction_id,amount_minor,reason,reopens_invoice
+REF-PARTIAL,PAY-REFUND,438888ec-9438-5dd3-96f7-ec15be3f555f,50000,commercial_refund,0
+REF-REVERSAL,PAY-REVERSED,7afcd258-23ab-5984-b824-c226985e7482,320000,bank_reversal,1

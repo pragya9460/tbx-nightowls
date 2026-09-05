@@ -1,0 +1,3 @@
+﻿allocation_id,invoice_id,payout_id,amount_minor,allocation_date
+00f01a45-523f-57d2-b67a-ab7d38826e15,INV-REVERSED,PAY-REVERSED,-320000,2026-08-16
+4e844eec-ef16-538e-8785-0879f5acad88,INV-REVERSED,PAY-REVERSED,320000,2026-08-15

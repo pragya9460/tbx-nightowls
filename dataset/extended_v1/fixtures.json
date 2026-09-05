@@ -1,0 +1,188 @@
+{
+  "exact": {
+    "payout": "PAY-EXACT",
+    "invoice": "INV-EXACT",
+    "transaction": "9a27e7b5-1cf3-5a58-8079-fec1365271d8",
+    "case": "REC-EXACT"
+  },
+  "july": {
+    "payout": "PAY-JULY",
+    "invoice": "INV-JULY",
+    "transaction": "423b89ac-c2e0-5105-8372-2708ee4c21f6",
+    "case": "REC-JULY"
+  },
+  "first_day": {
+    "payout": "PAY-FIRST-DAY",
+    "invoice": "INV-FIRST-DAY",
+    "transaction": "de6ba5cf-5275-5a39-80b2-2a9d8c1101e7",
+    "case": "REC-FIRST-DAY"
+  },
+  "last_day": {
+    "payout": "PAY-LAST-DAY",
+    "invoice": "INV-LAST-DAY",
+    "transaction": "0b87dbfc-ac1b-5cf0-bdb5-ef31bc93a174",
+    "case": "REC-LAST-DAY"
+  },
+  "next_month": {
+    "payout": "PAY-NEXT-MONTH",
+    "invoice": "INV-NEXT-MONTH",
+    "transaction": "a06c7b06-6951-5601-9223-64deada2d09b",
+    "case": "REC-NEXT-MONTH"
+  },
+  "threshold_equal": {
+    "payout": "PAY-THRESHOLD-EQUAL",
+    "invoice": "INV-THRESHOLD-EQUAL",
+    "transaction": "8271b49a-a81c-5f18-8289-d58fdf76764e",
+    "case": "REC-THRESHOLD-EQUAL"
+  },
+  "threshold_above": {
+    "payout": "PAY-THRESHOLD-ABOVE",
+    "invoice": "INV-THRESHOLD-ABOVE",
+    "transaction": "83818844-2d82-5dd9-9ad3-35628b6a2d5b",
+    "case": "REC-THRESHOLD-ABOVE"
+  },
+  "paise": {
+    "payout": "PAY-PAISE",
+    "invoice": "INV-PAISE",
+    "transaction": "66653666-346f-5a97-a679-6f8028a3e939",
+    "case": "REC-PAISE"
+  },
+  "missing_reference": {
+    "payout": "PAY-MISSING-REF",
+    "invoice": "INV-MISSING-REF",
+    "transaction": "96a2475e-7b55-5a24-9430-1102da7172f3",
+    "case": "REC-MISSING-REF"
+  },
+  "pending": {
+    "payout": "PAY-PENDING",
+    "invoice": "INV-PENDING",
+    "case": "REC-PENDING"
+  },
+  "processing": {
+    "payout": "PAY-PROCESSING",
+    "invoice": "INV-PROCESSING",
+    "case": "REC-PROCESSING"
+  },
+  "failed": {
+    "payout": "PAY-FAILED",
+    "invoice": "INV-FAILED"
+  },
+  "cancelled": {
+    "payout": "PAY-CANCELLED",
+    "invoice": "INV-CANCELLED"
+  },
+  "retry": {
+    "payout": "PAY-RETRY",
+    "invoice": "INV-RETRY",
+    "transaction": "090d63e8-2228-5b81-a9f0-efbf67f56428",
+    "case": "REC-RETRY"
+  },
+  "partial_invoice": {
+    "payout": "PAY-PARTIAL",
+    "invoice": "INV-PARTIAL",
+    "transaction": "c3c30eb4-4282-51c5-b831-c766a537c378",
+    "case": "REC-PARTIAL"
+  },
+  "unpaid_invoice": {
+    "invoice": "INV-UNPAID"
+  },
+  "installments": {
+    "invoice": "INV-INSTALLMENTS",
+    "payouts": [
+      "PAY-INSTALLMENT-1",
+      "PAY-INSTALLMENT-2"
+    ]
+  },
+  "batch": {
+    "payouts": [
+      "PAY-BATCH-1",
+      "PAY-BATCH-2"
+    ],
+    "transaction": "871e44a9-090b-5889-a8b2-945d7832e79c",
+    "case": "REC-BATCH"
+  },
+  "split": {
+    "payout": "PAY-SPLIT",
+    "transactions": [
+      "129e5a23-d8aa-51ec-9ab9-abf22e19d8e6",
+      "61b58652-d27f-5695-9b11-5c0e9649303f"
+    ],
+    "case": "REC-SPLIT"
+  },
+  "fee": {
+    "payout": "PAY-FEE",
+    "transaction": "c618cf86-6d9c-5567-8146-462784d1c6cc",
+    "case": "REC-FEE"
+  },
+  "mismatch": {
+    "payout": "PAY-MISMATCH",
+    "invoice": "INV-MISMATCH",
+    "transaction": "5eea1f24-4538-548a-960f-5b60049822a6",
+    "case": "REC-MISMATCH"
+  },
+  "missing_bank": {
+    "payout": "PAY-MISSING-BANK",
+    "invoice": "INV-MISSING-BANK",
+    "case": "REC-MISSING-BANK"
+  },
+  "unexpected": {
+    "transaction": "ac34a0ed-c0d5-5798-b9f1-21f85f5402e7",
+    "case": "REC-UNEXPECTED"
+  },
+  "duplicate": {
+    "payout": "PAY-DUPLICATE",
+    "transactions": [
+      "de2ddf15-a3c5-5119-802d-ccdf7644ce91",
+      "86555dea-681b-5b03-be6b-e1d064618a13"
+    ],
+    "case": "REC-DUPLICATE"
+  },
+  "ambiguous_match": {
+    "payouts": [
+      "PAY-AMBIG-1",
+      "PAY-AMBIG-2"
+    ],
+    "transaction": "ec28503b-e03f-570e-aa5f-e20508390a7d",
+    "case": "REC-AMBIG"
+  },
+  "timing": {
+    "payout": "PAY-TIMING",
+    "transaction": "8188ba25-a7f8-5f9c-84ea-68a20db1576b",
+    "case": "REC-TIMING"
+  },
+  "reversal": {
+    "payout": "PAY-REVERSED",
+    "invoice": "INV-REVERSED",
+    "transaction": "3858020e-5fe3-5ea7-ac88-fee402fd0b2d",
+    "case": "REC-REVERSED",
+    "refund_transaction": "7afcd258-23ab-5984-b824-c226985e7482",
+    "refund_case": "REC-REVERSAL"
+  },
+  "refund": {
+    "payout": "PAY-REFUND",
+    "invoice": "INV-REFUND",
+    "transaction": "5ab13807-fcbc-580e-97b3-4e2a7dc7d12f",
+    "case": "REC-REFUND",
+    "refund_transaction": "438888ec-9438-5dd3-96f7-ec15be3f555f",
+    "refund_case": "REC-PARTIAL-REFUND"
+  },
+  "internal": {
+    "transactions": [
+      "54c02dcb-e7e6-52f8-97a7-ff1a4f05ee78",
+      "00055fdf-b754-5f67-beec-4038bf682f9c"
+    ]
+  },
+  "anomaly": {
+    "payout": "PAY-CLOUD-OUTLIER",
+    "invoice": "INV-CLOUD-OUTLIER",
+    "transaction": "86bba9e3-8c33-567f-a756-968088746855",
+    "case": "REC-CLOUD-OUTLIER"
+  },
+  "vendor_alias": {
+    "vendors": [
+      "f22c83a8-9d83-5529-a9b5-56b892019de1",
+      "8463a659-7733-5594-8590-3d7cd66a5c08"
+    ]
+  },
+  "legacy_unassessed": {}
+}

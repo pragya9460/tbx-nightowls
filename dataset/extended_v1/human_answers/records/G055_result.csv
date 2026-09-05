@@ -1,0 +1,2 @@
+﻿payout_id,amount_minor,label,rule,baseline_payout_ids
+PAY-CLOUD-OUTLIER,2500000,unusually_large,amount > 5 * median of the six listed July baseline payouts,"[""PAY-CLOUD-HISTORY-1"", ""PAY-CLOUD-HISTORY-2"", ""PAY-CLOUD-HISTORY-3"", ""PAY-CLOUD-HISTORY-4"", ""PAY-CLOUD-HISTORY-5"", ""PAY-CLOUD-HISTORY-6""]"
