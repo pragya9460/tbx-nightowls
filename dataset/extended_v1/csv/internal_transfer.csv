@@ -1,0 +1,2 @@
+transfer_id,debit_transaction_id,credit_transaction_id,amount_minor
+XFER-1,54c02dcb-e7e6-52f8-97a7-ff1a4f05ee78,00055fdf-b754-5f67-beec-4038bf682f9c,900000

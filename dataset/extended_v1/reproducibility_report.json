@@ -1,0 +1,5 @@
+{
+  "status": "passed",
+  "identical_generated_files": 29,
+  "method": "Second clean generation; byte-for-byte comparison of CSVs, schema, manifest, dictionary and golden cases."
+}

@@ -1,0 +1,9 @@
+category_code,category_name,account_type
+FEES,Bank fees,expense
+LOG,Logistics,expense
+SERV,Professional services,expense
+SUP,Supplies,expense
+TECH,Software and technology,expense
+UNCLASS,Unclassified legacy cash movement,unknown
+UTIL,Utilities,expense
+XFER,Internal transfers,transfer
