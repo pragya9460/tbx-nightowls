@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV ARTHA_DUCKDB_PATH=/app/data/finance.duckdb
+ENV ARTHA_DATABASE_URL=mysql://artha:artha@mysql:3306/artha
 ENV ARTHA_DATA_DIR=/app/seed-data
 
 EXPOSE 8000

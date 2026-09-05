@@ -15,11 +15,48 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [showDbSettings, setShowDbSettings] = useState(false);
+  const [dbUrlInput, setDbUrlInput] = useState("");
+  const [dbUrlMasked, setDbUrlMasked] = useState<string | null>(null);
+  const [dbSaving, setDbSaving] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  async function ensureConversationId() {
+    if (conversationId) return conversationId;
+    const id = crypto.randomUUID();
+    setConversationId(id);
+    return id;
+  }
+
+  async function saveDatabaseUrl(clear = false) {
+    setDbSaving(true);
+    setError(null);
+    try {
+      const id = await ensureConversationId();
+      const resp = await fetch("/api/settings/database", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: id,
+          database_url: clear ? null : dbUrlInput.trim() || null,
+        }),
+      });
+      const body = await resp.json().catch(() => null);
+      if (!resp.ok) {
+        throw new Error(body?.detail || `Failed to save database URL (${resp.status})`);
+      }
+      setDbUrlMasked(body.database_url_masked);
+      if (clear) setDbUrlInput("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save database URL");
+    } finally {
+      setDbSaving(false);
+    }
+  }
 
   async function ask(question: string) {
     const trimmed = question.trim();
@@ -87,6 +124,7 @@ export default function App() {
     setMessages([]);
     setConversationId(null);
     setError(null);
+    setDbUrlMasked(null);
   }
 
   const showSuggestions = messages.length === 0;
@@ -101,15 +139,60 @@ export default function App() {
             AI Finance Assistant — every answer grounded in your financial data
           </p>
         </div>
-        {messages.length > 0 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={reset}
+            onClick={() => setShowDbSettings((v) => !v)}
             className="rounded-md border border-[var(--artha-border)] px-3 py-1.5 text-xs text-[var(--artha-muted)] hover:bg-black/5"
           >
-            New conversation
+            Database
           </button>
-        )}
+          {messages.length > 0 && (
+            <button
+              onClick={reset}
+              className="rounded-md border border-[var(--artha-border)] px-3 py-1.5 text-xs text-[var(--artha-muted)] hover:bg-black/5"
+            >
+              New conversation
+            </button>
+          )}
+        </div>
       </header>
+
+      {showDbSettings && (
+        <div className="mt-3 rounded-xl border border-[var(--artha-border)] bg-[var(--artha-panel)] p-4">
+          <h2 className="text-sm font-medium">MySQL connection</h2>
+          <p className="mt-1 text-xs text-[var(--artha-muted)]">
+            Paste a judge MySQL URL for this session, or leave empty to use the
+            server default (<code>ARTHA_DATABASE_URL</code>).
+          </p>
+          <input
+            value={dbUrlInput}
+            onChange={(e) => setDbUrlInput(e.target.value)}
+            placeholder="mysql://user:pass@host:3306/database"
+            className="mt-3 w-full rounded-lg border border-[var(--artha-border)] bg-white px-3 py-2 text-xs outline-none focus:border-[var(--artha-accent)]"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => saveDatabaseUrl(false)}
+              disabled={dbSaving || !dbUrlInput.trim()}
+              className="rounded-md bg-[var(--artha-accent)] px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+            >
+              {dbSaving ? "Saving…" : "Connect"}
+            </button>
+            <button
+              onClick={() => saveDatabaseUrl(true)}
+              disabled={dbSaving}
+              className="rounded-md border border-[var(--artha-border)] px-3 py-1.5 text-xs text-[var(--artha-muted)] hover:bg-black/5"
+            >
+              Use default
+            </button>
+            {dbUrlMasked && (
+              <span className="text-[10px] text-[var(--artha-muted)]">
+                Active: {dbUrlMasked}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <main className="flex-1 space-y-4 overflow-y-auto py-4">
@@ -182,6 +265,7 @@ export default function App() {
                         {msg.meta.understanding_latency_ms != null &&
                           ` · ${msg.meta.understanding_latency_ms}ms`}
                         {msg.meta.grounded ? " · grounded" : ""}
+                        {msg.meta.backend ? ` · ${msg.meta.backend}` : ""}
                       </div>
                     )}
                   </div>
@@ -226,3 +310,4 @@ export default function App() {
     </div>
   );
 }
+

@@ -1,21 +1,12 @@
-"""Query engine facade — runtime uses DuckDB only.
+"""Query engine facade — runtime uses MySQL only."""
 
-Kept so older imports of ``QueryResult`` and masking helpers keep working.
-Prefer::
-
-    from app.query_engine.duckdb_engine import DuckDBQueryEngine
-    from app.query_engine.result import QueryResult
-"""
-from .duckdb_engine import DuckDBQueryEngine, mask_account_number, mask_utr
-from .result import QueryResult
+from .mysql_engine import MySQLQueryEngine, mask_account_number, mask_utr
 
 __all__ = [
-    "QueryResult",
-    "DuckDBQueryEngine",
+    "MySQLQueryEngine",
     "FinancialQueryEngine",
     "mask_account_number",
     "mask_utr",
 ]
 
-# Historical name from the SQLAlchemy engine — tests/imports still use it.
-FinancialQueryEngine = DuckDBQueryEngine
+FinancialQueryEngine = MySQLQueryEngine

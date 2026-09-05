@@ -1,13 +1,9 @@
-"""Build DuckDB from CSVs (and optionally regenerate synthetic seed CSVs).
-
-Works for BOTH the synthetic seed and the official TBX dataset, as long as
-files share the documented column names (see app/services/seed_data.py
-CSV_COLUMNS).
+"""Load TBX CSVs into MySQL (and optionally regenerate synthetic seed CSVs).
 
 Usage:
     python scripts/load_data.py --data-dir ../data
     python scripts/load_data.py --generate --data-dir ../data
-    python scripts/load_data.py --generate --drop             # DuckDB is rebuilt
+    python scripts/load_data.py --drop --database-url mysql://artha:artha@127.0.0.1:3306/artha
 """
 from __future__ import annotations
 
@@ -33,14 +29,21 @@ def main() -> int:
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
-        "--duckdb-path",
-        default=os.environ.get("ARTHA_DUCKDB_PATH"),
-        help="override path for finance.duckdb",
+        "--database-url",
+        default=os.environ.get("ARTHA_DATABASE_URL")
+        or os.environ.get("ARTHA_MYSQL_URL"),
+        help="mysql://user:pass@host:3306/db",
     )
-    # Compatibility no-ops from the old MySQL/Postgres CLI.
-    parser.add_argument("--drop", action="store_true", help="(ignored; DuckDB is rebuilt)")
-    parser.add_argument("--duckdb", action="store_true", help="(ignored; always builds DuckDB)")
-    parser.add_argument("--duckdb-only", action="store_true", help="(ignored; always DuckDB-only)")
+    parser.add_argument(
+        "--drop",
+        action="store_true",
+        help="truncate existing tables before load (default: yes when loading)",
+    )
+    parser.add_argument(
+        "--no-drop",
+        action="store_true",
+        help="append without truncating (unsafe if PKs collide)",
+    )
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir).resolve()
@@ -57,11 +60,15 @@ def main() -> int:
                 w.writerows(rows)
         print(f"Generated synthetic seed data in {data_dir}")
 
-    from app.query_engine.duckdb_store import build_duckdb_from_csvs
+    from app.query_engine.mysql_store import load_csvs_into_mysql
 
-    db_path = Path(args.duckdb_path).resolve() if args.duckdb_path else None
-    path = build_duckdb_from_csvs(data_dir=data_dir, db_path=db_path)
-    print(f"DuckDB built at {path}")
+    drop = not args.no_drop
+    counts = load_csvs_into_mysql(
+        data_dir=data_dir,
+        url=args.database_url,
+        drop=drop,
+    )
+    print(f"MySQL loaded: {counts}")
     return 0
 
 

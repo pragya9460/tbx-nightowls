@@ -40,7 +40,7 @@ def build_evidence(q: FinancialQuery, result: QueryResult) -> dict:
             "sql": result.query_metadata.get("sql"),
             "cache_hit": bool(result.query_metadata.get("cache_hit")),
         },
-        "source": "DuckDB — TBX financial dataset (bank / account / transaction, deterministic query engine)",
+        "source": "MySQL — TBX financial dataset (bank / account / transaction, deterministic query engine)",
         "summary": result.summary,
         "grounded": True,
     }
