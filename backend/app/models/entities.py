@@ -1,147 +1,95 @@
-"""SQLAlchemy ORM entities — the financial data model."""
+"""SQLAlchemy ORM entities — the TBX financial data model.
+
+Three tables, exactly as in the authoritative schema (TBX - Database Schema.md):
+
+    bank 1 ─── N account 1 ─── N transaction
+
+Everything the assistant answers is grounded in these tables. There are no
+vendor / payroll / invoice / reconciliation tables in the source data — the
+semantic layer refuses questions that would require them.
+"""
 from __future__ import annotations
 
 import datetime as dt
 
 from sqlalchemy import (
     CheckConstraint,
-    Date,
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..db import Base
 
-# Single fictitious company / single currency for the MVP.
-COMPANY_CURRENCY = "INR"
+
+class Bank(Base):
+    __tablename__ = "bank"
+
+    bank_code: Mapped[str] = mapped_column(String(10), primary_key=True)
+    bank_name: Mapped[str] = mapped_column(String(150), nullable=False)
+
+    accounts: Mapped[list["Account"]] = relationship(back_populates="bank")
 
 
-class Vendor(Base):
-    __tablename__ = "vendors"
+class Account(Base):
+    __tablename__ = "account"
 
-    vendor_id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    vendor_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    account_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    # Sensitive: mask before display/LLM — never selected raw into answers.
+    account_number: Mapped[str] = mapped_column(String(20), nullable=False)
+    program_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    available_balance: Mapped[float] = mapped_column(
+        Numeric(15, 2), nullable=False, default=0.00
+    )
+    bank_code: Mapped[str] = mapped_column(
+        String(10), ForeignKey("bank.bank_code"), nullable=False
+    )
 
-    transactions: Mapped[list["Transaction"]] = relationship(back_populates="vendor")
-    payouts: Mapped[list["VendorPayout"]] = relationship(back_populates="vendor")
+    bank: Mapped[Bank] = relationship(back_populates="accounts")
+    transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
+
+    __table_args__ = (
+        Index("ix_account_bank", "bank_code"),
+        Index("ix_account_entity", "entity_id"),
+    )
 
 
 class Transaction(Base):
-    __tablename__ = "transactions"
+    __tablename__ = "transaction"
 
-    transaction_id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    transaction_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
-    vendor_id: Mapped[str | None] = mapped_column(
-        String(32), ForeignKey("vendors.vendor_id"), nullable=True
+    transaction_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("account.account_id"), nullable=False
     )
-    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
-    category: Mapped[str] = mapped_column(String(64), nullable=False)
-    account: Mapped[str] = mapped_column(String(64), nullable=False)
-    transaction_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    reconciliation_status: Mapped[str] = mapped_column(String(32), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    currency: Mapped[str] = mapped_column(String(8), default=COMPANY_CURRENCY)
+    # MySQL TIMESTAMP(6) in the real DDL; generic DateTime keeps tests on
+    # SQLite working while the MySQL dialect renders TIMESTAMP(6).
+    transaction_date: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False)
+    transaction_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    description: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    transaction_amount: Mapped[float] = mapped_column(
+        Numeric(15, 2), nullable=False, default=0.00
+    )
+    # Plaintext, directly searchable.
+    transaction_reference_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Sensitive: mask before display/LLM.
+    utr_number: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
-    vendor: Mapped[Vendor | None] = relationship(back_populates="transactions")
-    reconciliation: Mapped["Reconciliation | None"] = relationship(
-        back_populates="transaction"
-    )
+    account: Mapped["Account"] = relationship(back_populates="transactions")
 
     __table_args__ = (
-        CheckConstraint(
-            transaction_type.in_(("debit", "credit")), name="ck_txn_type"
-        ),
-        CheckConstraint(
-            reconciliation_status.in_(("reconciled", "unreconciled", "pending")),
-            name="ck_txn_rec_status",
-        ),
-        CheckConstraint(amount >= 0, name="ck_txn_amount_nonneg"),
+        CheckConstraint(transaction_type.in_(("credit", "debit")), name="ck_txn_type"),
+        # Query-pattern indexes (see README "Scaling toward 20M records"): the
+        # semantic layer only filters/groups on these columns, so only these
+        # get indexes. No speculative indexes.
         Index("ix_txn_date", "transaction_date"),
-        Index("ix_txn_vendor", "vendor_id"),
-        Index("ix_txn_status", "reconciliation_status"),
-        Index("ix_txn_category", "category"),
-        Index("ix_txn_date_status", "transaction_date", "reconciliation_status"),
+        Index("ix_txn_account", "account_id"),
+        Index("ix_txn_type", "transaction_type"),
+        Index("ix_txn_reference", "transaction_reference_id"),
+        Index("ix_txn_date_type", "transaction_date", "transaction_type"),
+        Index("ix_txn_account_date", "account_id", "transaction_date"),
     )
-
-
-class VendorPayout(Base):
-    __tablename__ = "vendor_payouts"
-
-    payout_id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    payout_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
-    vendor_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("vendors.vendor_id"), nullable=False
-    )
-    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    transaction_id: Mapped[str | None] = mapped_column(
-        String(32), ForeignKey("transactions.transaction_id"), nullable=True
-    )
-    currency: Mapped[str] = mapped_column(String(8), default=COMPANY_CURRENCY)
-
-    vendor: Mapped[Vendor] = relationship(back_populates="payouts")
-    transaction: Mapped[Transaction | None] = relationship()
-
-    __table_args__ = (
-        CheckConstraint(
-            status.in_(("paid", "pending", "failed")), name="ck_payout_status"
-        ),
-        CheckConstraint(amount >= 0, name="ck_payout_amount_nonneg"),
-        Index("ix_payout_date", "payout_date"),
-        Index("ix_payout_vendor", "vendor_id"),
-        Index("ix_payout_status", "status"),
-        Index("ix_payout_vendor_date", "vendor_id", "payout_date"),
-    )
-
-
-class Reconciliation(Base):
-    __tablename__ = "reconciliation"
-
-    reconciliation_id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    transaction_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("transactions.transaction_id"), nullable=False, unique=True
-    )
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
-    reconciled_date: Mapped[dt.date | None] = mapped_column(Date, nullable=True)
-
-    transaction: Mapped[Transaction] = relationship(back_populates="reconciliation")
-
-    __table_args__ = (
-        CheckConstraint(
-            status.in_(("reconciled", "unreconciled", "pending")), name="ck_rec_status"
-        ),
-        Index("ix_rec_status", "status"),
-        Index("ix_rec_txn", "transaction_id"),
-    )
-
-
-# Canonical enum values mirrored for the semantic layer / seed generator.
-class TransactionType:
-    DEBIT = "debit"
-    CREDIT = "credit"
-
-
-class ReconciliationStatus:
-    RECONCILED = "reconciled"
-    UNRECONCILED = "unreconciled"
-    PENDING = "pending"
-
-
-class PayoutStatus:
-    PAID = "paid"
-    PENDING = "pending"
-    FAILED = "failed"
-
-
-def utc_now() -> dt.datetime:
-    return dt.datetime.now(tz=dt.timezone.utc)
-
-
-def server_default_now():
-    return func.now()

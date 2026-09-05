@@ -3,10 +3,10 @@ import type { ChatMessage, ChatResponse } from "./types";
 import { EvidencePanel } from "./components/EvidenceTable";
 
 const SUGGESTED_QUESTIONS = [
-  "How much did we spend on vendor payouts last month?",
-  "Which transactions are still unreconciled?",
-  "Which vendors received the most money last month?",
-  "How much did we pay ABC Suppliers last month?",
+  "What is my total available balance?",
+  "How much did I spend last month?",
+  "Which bank holds the most money?",
+  "Show my largest transactions.",
 ];
 
 export default function App() {
@@ -117,8 +117,8 @@ export default function App() {
           <div className="rounded-xl border border-[var(--artha-border)] bg-[var(--artha-panel)] p-5">
             <h2 className="text-sm font-medium">Ask about your finances</h2>
             <p className="mt-1 text-xs text-[var(--artha-muted)]">
-              Vendor payouts, spend, reconciliation — answers computed directly
-              from the database.
+              Balances, spend, inflow, banks, transaction search — every answer
+              computed directly from the database and grounded in evidence.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               {SUGGESTED_QUESTIONS.map((q) => (

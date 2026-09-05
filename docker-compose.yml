@@ -1,34 +1,40 @@
 services:
-  postgres:
-    image: postgres:16-alpine
+  mysql:
+    image: mysql:8.4
     environment:
-      POSTGRES_USER: artha
-      POSTGRES_PASSWORD: artha
-      POSTGRES_DB: artha
+      MYSQL_ROOT_PASSWORD: artha
+      MYSQL_USER: artha
+      MYSQL_PASSWORD: artha
+      MYSQL_DATABASE: artha
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - mysqldata:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U artha -d artha"]
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uartha -partha"]
       interval: 3s
       timeout: 3s
-      retries: 20
+      retries: 30
 
   backend:
     build: ./backend
     environment:
-      ARTHA_DATABASE_URL: postgresql+psycopg2://artha:artha@postgres:5432/artha
+      ARTHA_DATABASE_URL: mysql+pymysql://artha:artha@mysql:3306/artha
       ARTHA_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ARTHA_LLM_PROVIDER: ${ARTHA_LLM_PROVIDER:-}
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     ports:
       - "8000:8000"
-    # Seeds the database on first boot, then serves the API.
+    # Seeds the database on first boot, then serves the API. The retry loop
+    # covers the window where MySQL reports healthy but isn't accepting
+    # connections yet.
     command: >
-      sh -c "python scripts/load_data.py --generate --drop --data-dir /app/seed-data &&
+      sh -c "for i in 1 2 3 4 5 6 7 8 9 10; do
+               python scripts/load_data.py --generate --drop --data-dir /app/seed-data && break ||
+               (echo \"seed attempt $$i failed, retrying in 5s\"; sleep 5);
+             done &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
@@ -39,4 +45,4 @@ services:
       - "5173:80"
 
 volumes:
-  pgdata:
+  mysqldata:

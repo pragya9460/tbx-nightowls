@@ -25,7 +25,7 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
     db_ok = True
     try:
         engine = FinancialQueryEngine(db)
-        for table in ("vendors", "transactions", "vendor_payouts", "reconciliation"):
+        for table in ("bank", "account", "transaction"):
             counts[table] = engine.count_total(table)
     except Exception:
         db_ok = False

@@ -16,11 +16,13 @@ from ..query_engine.engine import FinancialQueryEngine
 from ..query_engine.evidence import build_evidence
 from ..schemas.query import (
     ComparisonSpec,
+    DateRangeType,
     FinancialQuery,
     QueryRefusalReason,
     previous_period,
     resolve_date_range,
     refusal,
+    today as app_today,
 )
 from ..config import LLM_MODEL, LLM_MAX_RETRIES, LLM_TIMEOUT_SECONDS
 from .answers import generate_answer
@@ -35,18 +37,10 @@ class ChatService:
         from .. import config
 
         provider_name = config.effective_provider()
-        vendor_names = [
-            name for (name,) in self.db.execute(
-                __import__("sqlalchemy").select(
-                    __import__("app.models", fromlist=["Vendor"]).Vendor.vendor_name
-                )
-            )
-        ]
         return build_provider(
             provider_name,
             api_key=config.ANTHROPIC_API_KEY,
             model=config.LLM_MODEL,
-            vendor_names=vendor_names,
             max_retries=config.LLM_MAX_RETRIES,
             timeout=config.LLM_TIMEOUT_SECONDS,
         )
@@ -70,14 +64,14 @@ class ChatService:
         # 3. Validate strictly (never execute unvalidated model output)
         raw = understanding.query or {}
         try:
-            if isinstance(raw.get("date_range"), dict) and raw["date_range"].get("type") in (
-                "calendar_month", "last_n_months", "custom", "all_time",
-                "month_before_previous",
-            ) and not raw["date_range"].get("start") and not raw["date_range"].get("end") \
-               and raw["date_range"].get("type") not in ("all_time", "last_n_months"):
-                # resolve relative ranges deterministically before validation
+            dr = raw.get("date_range")
+            if isinstance(dr, dict) and dr.get("type") in [
+                t.value for t in DateRangeType
+            ]:
+                # Relative ranges resolve deterministically server-side —
+                # the LLM never supplies final dates.
                 raw["date_range"] = resolve_date_range(
-                    dt.date.today(), raw["date_range"]
+                    app_today(), dr
                 ).model_dump(mode="json", exclude_none=True)
             fq = FinancialQuery.model_validate(raw)
         except Exception as e:
@@ -113,7 +107,16 @@ class ChatService:
         answer = generate_answer(fq, result, comparison_result)
         evidence = build_evidence(fq, result)
         if comparison_result is not None:
-            evidence["comparison"] = build_evidence(fq, comparison_result)
+            comparison_evidence = build_evidence(
+                fq, comparison_result
+            )
+            # the comparison block must describe the COMPARISON period, not
+            # repeat the base period's dates
+            cmp_meta = comparison_result.query_metadata.get("date_range", {})
+            comparison_evidence["how_calculated"]["date_range"] = cmp_meta.get(
+                "label"
+            ) or comparison_evidence["how_calculated"]["date_range"]
+            evidence["comparison"] = comparison_evidence
 
         # 6. Update structured conversation memory
         if conversation_id:

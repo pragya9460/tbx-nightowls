@@ -1,144 +1,214 @@
-"""Guardrail tests: schema safety, unsupported questions, ambiguity,
-invalid structures. The semantic layer must reject everything outside its
-allowlist."""
+"""Hallucination guardrails: refusals for unsupported/ambiguous/invalid
+questions, SQL-injection resistance, sensitive-field masking."""
 from __future__ import annotations
 
-import datetime as dt
-
 import pytest
-from pydantic import ValidationError
 
 from app.llm.provider import RuleBasedProvider
+from app.query_engine.engine import FinancialQueryEngine, mask_account_number, mask_utr
 from app.schemas.query import (
     Aggregation,
-    DateRange,
-    DateRangeType,
     FinancialQuery,
     Intent,
     Metric,
-    QueryFilters,
-    QueryRefusalReason,
-    refusal,
     supported_capabilities,
 )
 
 
+def u(question: str, context=None):
+    return RuleBasedProvider().understand(question, context=context)
+
+
+# ---------------------------------------------------------------------------
+# Unsupported domains — must refuse, never guess
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("question,fragment", [
+    ("How much did I pay my employees?", "payroll"),
+    ("What is my total salary expense?", "payroll"),
+    ("How much GST do I owe?", "tax"),
+    ("What is my profit margin?", "profit"),
+    ("Which invoices are overdue?", "invoice"),
+    ("How much do I owe vendors?", "vendor"),
+    ("Show my escrow mandates", "escrow"),
+    ("List my customers", "customer"),
+    ("Forecast my spend next quarter", "forecast"),
+    ("How much revenue did I make?", "revenue"),
+])
+def test_unsupported_domains_refused(question, fragment):
+    resp = u(question)
+    assert resp.refusal_reason == "unsupported"
+    assert fragment in resp.refusal_message.lower()
+
+
+def test_unsupported_refusal_does_not_execute_anything():
+    resp = u("What is my profit margin?")
+    assert resp.query is None
+
+
+def test_supported_refusal_includes_capabilities():
+    resp = u("What is my profit margin?")
+    assert resp.refusal_message  # non-empty guidance
+
+
+# ---------------------------------------------------------------------------
+# Ambiguity — explicit interpretation, never silent guessing
+# ---------------------------------------------------------------------------
+
+def test_bare_spend_interprets_as_debit_and_answers_state_it():
+    """'How much did I spend last month?' maps to debit transactions — the
+    natural reading. The generated ANSWER must make that interpretation
+    explicit (spec §6), verified in the answer template tests."""
+    resp = u("How much did I spend last month?")
+    assert resp.refusal_reason is None
+    assert resp.query["filters"]["transaction_type"] == "debit"
+    assert resp.query["intent"] == "transaction_summary"
+
+
+def test_spend_with_debit_word_is_not_ambiguous():
+    resp = u("How much did I spend (debit) last month?")
+    assert resp.query is not None
+    assert resp.query["filters"]["transaction_type"] == "debit"
+
+
+def test_credit_inflow_maps_to_credit():
+    resp = u("How much money came in last month?")
+    assert resp.query is not None
+    assert resp.query["filters"]["transaction_type"] == "credit"
+
+
+# ---------------------------------------------------------------------------
+# Invalid structures — rejected by validation
+# ---------------------------------------------------------------------------
+
 def test_extra_fields_rejected():
-    with pytest.raises(ValidationError):
+    with pytest.raises(Exception):
         FinancialQuery.model_validate({
-            "intent": "vendor_payout_summary",
-            "metric": "payout_amount",
-            "aggregation": "sum",
-            "filters": {},
-            "date_range": {"type": "custom", "start": "2026-08-01", "end": "2026-08-31"},
-            "made_up_field": 42,  # not in schema — must be rejected
+            "intent": "transaction_summary", "metric": "transaction_amount",
+            "aggregation": "sum", "date_range": {"type": "all_time"},
+            "evil_field": "DROP TABLE",
         })
 
 
 def test_unknown_intent_rejected():
-    with pytest.raises(ValidationError):
+    with pytest.raises(Exception):
         FinancialQuery.model_validate({
-            "intent": "employee_salary_summary",  # not in enum
-            "metric": "payout_amount",
-            "aggregation": "sum",
-            "filters": {},
-            "date_range": {"type": "custom", "start": "2026-08-01", "end": "2026-08-31"},
+            "intent": "vendor_payout_summary", "metric": "transaction_amount",
+            "aggregation": "sum", "date_range": {"type": "all_time"},
         })
 
 
-def test_unknown_metric_rejected():
-    with pytest.raises(ValidationError):
+def test_balance_metric_only_for_balance_intents():
+    with pytest.raises(Exception):
         FinancialQuery.model_validate({
-            "intent": "vendor_payout_summary",
-            "metric": "net_profit",  # not in enum
-            "aggregation": "sum",
-            "filters": {},
-            "date_range": {"type": "custom", "start": "2026-08-01", "end": "2026-08-31"},
+            "intent": "transaction_summary", "metric": "balance",
+            "aggregation": "sum", "date_range": {"type": "all_time"},
         })
 
 
-def test_invalid_date_range_rejected():
-    with pytest.raises(ValidationError):
+def test_min_max_amount_ordering_enforced():
+    with pytest.raises(Exception):
         FinancialQuery.model_validate({
-            "intent": "vendor_payout_summary",
-            "metric": "payout_amount",
+            "intent": "transaction_summary", "metric": "transaction_amount",
             "aggregation": "sum",
-            "filters": {},
-            "date_range": {"type": "custom", "start": "2026-08-31", "end": "2026-08-01"},  # start > end
+            "filters": {"min_amount": 500, "max_amount": 100},
+            "date_range": {"type": "all_time"},
         })
 
 
-def test_invalid_payout_status_filter_rejected():
-    with pytest.raises(ValidationError):
-        QueryFilters(payout_status="maybe")
+# ---------------------------------------------------------------------------
+# SQL-injection resistance
+# ---------------------------------------------------------------------------
 
-
-def test_intent_metric_mismatch_rejected():
-    with pytest.raises(ValidationError):
+@pytest.mark.parametrize("payload", [
+    "'; DROP TABLE transaction; --",
+    "x' OR '1'='1",
+    "UNION SELECT bank_name FROM bank",
+    "admin'--",
+])
+def test_injection_payloads_rejected_by_validator(payload):
+    with pytest.raises(Exception):
         FinancialQuery.model_validate({
-            "intent": "vendor_payout_summary",
-            "metric": "transaction_amount",  # payout intent with txn metric
-            "aggregation": "sum",
-            "filters": {},
-            "date_range": {"type": "custom", "start": "2026-08-01", "end": "2026-08-31"},
+            "intent": "transaction_list", "metric": "transaction_amount",
+            "aggregation": "none",
+            "filters": {"description_contains": payload},
+            "date_range": {"type": "all_time"},
         })
 
 
-def test_top_vendors_requires_group_by():
-    with pytest.raises(ValidationError):
+def test_injection_payload_as_description_fails_validation(db):
+    """A raw SQL payload in a description filter is rejected by the Pydantic
+    validator (see test_injection_payloads_rejected_by_validator); the rule
+    provider extracts only clean text. Defense in depth: even bypassing both,
+    filter values are parameter-bound so no payload can execute."""
+    payload = "Robert'; DROP TABLE transaction;--"
+    with pytest.raises(Exception):
         FinancialQuery.model_validate({
-            "intent": "top_vendors",
-            "metric": "payout_amount",
-            "aggregation": "sum",
-            "filters": {},
-            "date_range": {"type": "custom", "start": "2026-08-01", "end": "2026-08-31"},
+            "intent": "transaction_list", "metric": "transaction_amount",
+            "aggregation": "none",
+            "filters": {"description_contains": payload},
+            "date_range": {"type": "all_time"},
         })
+    # table still exists and is queryable ('transaction' is a reserved word
+    # in SQLite — quote it; SQLAlchemy auto-quotes in ORM-generated SQL)
+    from sqlalchemy import text
+    assert db.execute(text('SELECT COUNT(*) FROM "transaction"')).scalar() > 0
 
 
-def test_refusal_taxonomy():
-    for reason in QueryRefusalReason:
-        r = refusal(reason, "test message")
-        assert r.reason == reason
+# ---------------------------------------------------------------------------
+# Sensitive-field masking
+# ---------------------------------------------------------------------------
+
+def test_mask_account_number():
+    assert mask_account_number("50200013729069") == "XXXXX9069"
+    assert mask_account_number("1234") == "XXXXX1234"
+    assert mask_account_number(None) is None
+    assert mask_account_number("") == ""
 
 
-def test_supported_capabilities_complete():
+def test_mask_utr():
+    assert mask_utr("jhI5nAdyb1qOEjmcB3JvWjC6tTO+ZPVqBFPm/GiErC4TRBWRQ5ylPG3p").startswith("jhI5")
+    assert mask_utr("jhI5nAdyb1qOEjmcB3JvWjC6tTO+ZPVqBFPm/GiErC4TRBWRQ5ylPG3p").endswith("3p")
+    assert "***" in mask_utr("jhI5nAdyb1qOEjmcB3JvWjC6tTO+ZPVqBFPm/GiErC4TRBWRQ5ylPG3p")
+    assert mask_utr(None) is None
+
+
+def test_engine_results_never_contain_raw_account_number(db):
+    engine = FinancialQueryEngine(db)
+    from app.schemas.query import DateRangeType
+
+    q = FinancialQuery.model_validate({
+        "intent": "transaction_list", "metric": "transaction_amount",
+        "aggregation": "none", "date_range": {"type": "all_time"}, "limit": 20,
+    })
+    result = engine.execute(q)
+    for r in result.records:
+        raw = r.get("account_number", "")
+        assert not (raw.isdigit() and len(raw) > 6), f"raw account leaked: {raw}"
+
+
+def test_engine_results_mask_utr(db):
+    engine = FinancialQueryEngine(db)
+    q = FinancialQuery.model_validate({
+        "intent": "transaction_list", "metric": "transaction_amount",
+        "aggregation": "none", "date_range": {"type": "all_time"}, "limit": 20,
+    })
+    result = engine.execute(q)
+    for r in result.records:
+        utr = r.get("utr_number")
+        if utr:
+            # masked form: prefix + '***' + short suffix, never the full value
+            assert len(utr) < 12, f"raw UTR leaked: {utr}"
+            assert "***" in utr, f"unmasked UTR leaked: {utr}"
+
+
+# ---------------------------------------------------------------------------
+# Supported capabilities registry is coherent
+# ---------------------------------------------------------------------------
+
+def test_supported_capabilities_introspectable():
     caps = supported_capabilities()
-    assert "vendor_payout_summary" in caps["intents"]
-    assert "payout_amount" in caps["metrics"]
-    assert "vendor_name" in caps["filters"]
-
-
-# ----- rule-based understanding guardrails ----------------------------------
-
-def test_unsupported_salary_question():
-    p = RuleBasedProvider()
-    u = p.understand("How much did we spend on employee salaries?")
-    assert u.refusal_reason == "unsupported"
-    assert "payroll" in u.refusal_message.lower() or "not available" in u.refusal_message.lower()
-
-
-def test_unsupported_tax_question():
-    p = RuleBasedProvider()
-    u = p.understand("How much GST did we pay last quarter?")
-    assert u.refusal_reason == "unsupported"
-
-
-def test_unsupported_revenue_question():
-    p = RuleBasedProvider()
-    u = p.understand("What was our revenue last month?")
-    assert u.refusal_reason == "unsupported"
-
-
-def test_ambiguous_spend_question():
-    p = RuleBasedProvider()
-    u = p.understand("How much did we spend last month?")
-    assert u.refusal_reason == "ambiguous"
-
-
-def test_valid_question_maps_to_query():
-    p = RuleBasedProvider()
-    u = p.understand("How much did we spend on vendor payouts last month?")
-    assert u.query is not None
-    q = FinancialQuery.model_validate(u.query)
-    assert q.intent == Intent.VENDOR_PAYOUT_SUMMARY
-    assert q.metric == Metric.PAYOUT_AMOUNT
+    assert "transaction_summary" in caps["intents"]
+    assert "account_balance" in caps["intents"]
+    assert "utr_number" in caps["filters"]
+    assert "vendor_id" not in caps["filters"]

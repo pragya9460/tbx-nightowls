@@ -1,9 +1,8 @@
 from .entities import (  # noqa: F401
-    Reconciliation,
-    ReconciliationStatus,
+    Account,
+    Bank,
     Transaction,
-    TransactionType,
-    Vendor,
-    VendorPayout,
-    PayoutStatus,
 )
+
+# Canonical enum values mirrored for the semantic layer / seed generator.
+TRANSACTION_TYPES = ("credit", "debit")

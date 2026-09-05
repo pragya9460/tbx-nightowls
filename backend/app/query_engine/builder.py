@@ -2,201 +2,294 @@
 
 Every column, table, and operator referenced here comes from the ORM models —
 never from strings produced by the LLM. This is the only path from a
-FinancialQuery to SQL.
+FinancialQuery to SQL. Filter values are bound as parameters (SQLAlchemy
+parametrized queries), which makes SQL injection structurally impossible.
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import sqlalchemy as sa
 
-from ..models import Reconciliation, Transaction, Vendor, VendorPayout
-from ..schemas.query import Aggregation, DateRangeType, FinancialQuery, GroupByDimension, Metric
+from ..models import Account, Bank, Transaction
+from ..schemas.query import (
+    Aggregation,
+    DateRangeType,
+    FinancialQuery,
+    GroupByDimension,
+    Metric,
+    SortDirection,
+)
 
-_DIMENSION_TO_COLUMN: dict[GroupByDimension, sa.Column] = {
-    GroupByDimension.VENDOR: Vendor.vendor_name,
-    GroupByDimension.VENDOR_CATEGORY: Vendor.category,
-    GroupByDimension.TRANSACTION_CATEGORY: Transaction.category,
-    GroupByDimension.ACCOUNT: Transaction.account,
-    GroupByDimension.PAYOUT_STATUS: VendorPayout.status,
-    GroupByDimension.RECONCILIATION_STATUS: Transaction.reconciliation_status,
-    GroupByDimension.MONTH: sa.func.date_trunc("month", VendorPayout.payout_date),
+_DIMENSION_TO_EXPR: dict[GroupByDimension, list] = {
+    # (select expression, group-by expression) — a dimension may alias columns
+    GroupByDimension.BANK: [Bank.bank_code, Bank.bank_name],
+    GroupByDimension.ACCOUNT: [Account.account_id, Account.account_number],
+    GroupByDimension.TRANSACTION_TYPE: [Transaction.transaction_type],
+    GroupByDimension.MONTH: [sa.func.date(Transaction.transaction_date)],
 }
 
-_METRIC_TO_EXPR: dict[Metric, dict[Aggregation, sa.Column]] = {
-    Metric.PAYOUT_AMOUNT: {
-        Aggregation.SUM: VendorPayout.amount,
-        Aggregation.AVG: VendorPayout.amount,
-        Aggregation.MAX: VendorPayout.amount,
-        Aggregation.MIN: VendorPayout.amount,
-    },
-    Metric.PAYOUT_COUNT: {
-        Aggregation.COUNT: VendorPayout.payout_id,
-        Aggregation.NONE: VendorPayout.payout_id,
-    },
-    Metric.TRANSACTION_AMOUNT: {
-        Aggregation.SUM: Transaction.amount,
-        Aggregation.AVG: Transaction.amount,
-        Aggregation.MAX: Transaction.amount,
-        Aggregation.MIN: Transaction.amount,
-    },
-    Metric.TRANSACTION_COUNT: {
-        Aggregation.COUNT: Transaction.transaction_id,
-        Aggregation.NONE: Transaction.transaction_id,
-    },
+_AGG_TO_FN = {
+    Aggregation.SUM: sa.func.sum,
+    Aggregation.AVG: sa.func.avg,
+    Aggregation.MAX: sa.func.max,
+    Aggregation.MIN: sa.func.min,
 }
 
 
-def _base_table(q: FinancialQuery) -> sa.Table:
-    if q.metric in (Metric.PAYOUT_AMOUNT, Metric.PAYOUT_COUNT):
-        return VendorPayout.__table__
-    return Transaction.__table__
+def _metric_expr(q: FinancialQuery):
+    if q.metric == Metric.BALANCE:
+        # balance metric is handled by dedicated balance queries
+        raise ValueError("balance metric uses dedicated balance queries")
+    agg = q.aggregation
+    if agg == Aggregation.COUNT:
+        return sa.func.count(sa.distinct(Transaction.transaction_id)).label("value")
+    if agg == Aggregation.NONE:
+        return sa.literal(1).label("_one")
+    if agg not in _AGG_TO_FN:
+        raise ValueError(f"aggregation '{agg.value}' not supported here")
+    return _AGG_TO_FN[agg](Transaction.transaction_amount).label("value")
 
 
 def _apply_filters(stmt, q: FinancialQuery):
-    """Apply joins + WHERE clauses. This is the ONLY place joins are added —
-    callers must pass a stmt with select_from already set, without a Vendor
-    join of its own."""
+    """WHERE clauses only. Joins are owned by _base_query."""
     f = q.filters
-    if q.metric in (Metric.PAYOUT_AMOUNT, Metric.PAYOUT_COUNT):
-        if f.vendor_id:
-            stmt = stmt.where(VendorPayout.vendor_id == f.vendor_id)
-        if f.vendor_name:
-            stmt = stmt.where(sa.func.lower(Vendor.vendor_name) == f.vendor_name.lower())
-        if f.vendor_category:
-            stmt = stmt.where(sa.func.lower(Vendor.category) == f.vendor_category.lower())
-        if f.payout_status:
-            stmt = stmt.where(VendorPayout.status == f.payout_status)
-    else:
-        if f.vendor_id:
-            stmt = stmt.where(Transaction.vendor_id == f.vendor_id)
-        if f.vendor_name:
-            stmt = stmt.where(sa.func.lower(Vendor.vendor_name) == f.vendor_name.lower())
-        if f.vendor_category:
-            stmt = stmt.where(sa.func.lower(Vendor.category) == f.vendor_category.lower())
-        if f.reconciliation_status:
-            stmt = stmt.where(Transaction.reconciliation_status == f.reconciliation_status)
-        if f.transaction_category:
-            stmt = stmt.where(sa.func.lower(Transaction.category) == f.transaction_category.lower())
-        if f.account:
-            stmt = stmt.where(sa.func.lower(Transaction.account) == f.account.lower())
-        if f.transaction_type:
-            stmt = stmt.where(Transaction.transaction_type == f.transaction_type)
+    if f.transaction_type:
+        stmt = stmt.where(Transaction.transaction_type == f.transaction_type)
+    if f.description_contains:
+        # substring match, parameter-bound
+        stmt = stmt.where(
+            Transaction.description.ilike(f"%{f.description_contains}%")
+        )
+    if f.reference_id:
+        stmt = stmt.where(
+            Transaction.transaction_reference_id == f.reference_id
+        )
+    if f.utr_number:
+        stmt = stmt.where(Transaction.utr_number == f.utr_number)
+    if f.min_amount is not None:
+        stmt = stmt.where(Transaction.transaction_amount >= f.min_amount)
+    if f.max_amount is not None:
+        stmt = stmt.where(Transaction.transaction_amount <= f.max_amount)
+    if f.bank_code:
+        stmt = stmt.where(Bank.bank_code == f.bank_code)
+    elif f.bank_name:
+        stmt = stmt.where(Bank.bank_name.ilike(f"%{f.bank_name}%"))
+    if f.account_id:
+        stmt = stmt.where(Transaction.account_id == f.account_id)
     return stmt
 
 
 def _base_query(q: FinancialQuery, cols):
-    """Base SELECT with the correct join, ready for filters/date-ranges."""
-    if q.metric in (Metric.PAYOUT_AMOUNT, Metric.PAYOUT_COUNT):
-        return sa.select(*cols).select_from(VendorPayout).join(
-            Vendor, VendorPayout.vendor_id == Vendor.vendor_id
-        )
-    return sa.select(*cols).select_from(Transaction).outerjoin(
-        Vendor, Transaction.vendor_id == Vendor.vendor_id
+    """SELECT ... FROM transaction JOIN account JOIN bank.
+
+    Joins live ONLY here so they can never be duplicated (a bug we hit in
+    the previous iteration).
+    """
+    return (
+        sa.select(*cols)
+        .select_from(Transaction)
+        .join(Account, Transaction.account_id == Account.account_id)
+        .join(Bank, Account.bank_code == Bank.bank_code)
     )
 
 
-def _date_clause(q: FinancialQuery, dr):
-    t = _base_table(q)
-    date_col = VendorPayout.payout_date if t is VendorPayout.__table__ else Transaction.transaction_date
-    if dr.type == DateRangeType.ALL_TIME or dr.start is None:
+def _date_clause(q: FinancialQuery) -> list:
+    """transaction_date is a TIMESTAMP; date_range bounds are dates.
+
+    Comparing against dates-as-day-boundaries: the column is cast to DATE in
+    the WHERE clause so a timestamp mid-day still matches its own day. On
+    MySQL, DATE(timestamp) works natively; on SQLite the comparison between
+    a 'YYYY-MM-DD HH:MM:SS' string and a 'YYYY-MM-DD' date also works
+    lexicographically for >= the start bound, but NOT for <= end (a timestamp
+    on the end day sorts after the bare date). We therefore compare against
+    next-day-exclusive bounds instead — portable and index-friendly.
+    """
+    if q.date_range.type == DateRangeType.ALL_TIME or q.date_range.start is None:
         return []
-    return [date_col >= dr.start, date_col <= dr.end]
-
-
-def _metric_expr(q: FinancialQuery):
-    agg = q.aggregation
-    options = _METRIC_TO_EXPR[q.metric]
-    if agg == Aggregation.COUNT:
-        return sa.func.count(options[Aggregation.COUNT]).label("value")
-    if agg == Aggregation.NONE:
-        return sa.literal(1).label("_one")  # placeholder; list intents don't aggregate
-    if agg not in options:
-        raise ValueError(f"aggregation '{agg.value}' not supported for metric '{q.metric.value}'")
-    col = options[agg]
-    fn = {Aggregation.SUM: sa.func.sum, Aggregation.AVG: sa.func.avg,
-          Aggregation.MAX: sa.func.max, Aggregation.MIN: sa.func.min}[agg]
-    return fn(col).label("value")
-
-
-def _group_expr(q: FinancialQuery):
-    if not q.group_by:
-        return []
-    return [
-        _DIMENSION_TO_COLUMN[d].label(d.value if d != GroupByDimension.VENDOR else "vendor_name")
-        for d in q.group_by
-    ]
+    start = dt.datetime.combine(q.date_range.start, dt.time.min)
+    end_exclusive = dt.datetime.combine(q.date_range.end, dt.time.min) + dt.timedelta(days=1)
+    return [Transaction.transaction_date >= start,
+            Transaction.transaction_date < end_exclusive]
 
 
 def build_select(q: FinancialQuery) -> sa.Select:
-    """Compile a validated FinancialQuery into a SELECT. Raises ValueError for
-    combinations the semantic layer does not support."""
-    t = _base_table(q)
-
-    if q.intent.value == "unreconciled_list":
-        return _build_unreconciled_list(q)
-
+    """Compile a validated FinancialQuery into a SELECT."""
     is_agg = q.aggregation != Aggregation.NONE
-    cols: list = []
-    if is_agg:
-        cols.append(_metric_expr(q))
-        cols.extend(_group_expr(q))
-    else:
-        # record listing
-        if t is VendorPayout.__table__:
-            cols = [
-                VendorPayout.payout_id, VendorPayout.payout_date,
-                Vendor.vendor_name, VendorPayout.amount, VendorPayout.status,
-            ]
-        else:
-            cols = [
-                Transaction.transaction_id, Transaction.transaction_date,
-                Vendor.vendor_name, Transaction.amount, Transaction.category,
-                Transaction.account, Transaction.reconciliation_status,
-                Transaction.description,
-            ]
-    stmt = _base_query(q, cols)
-    stmt = _apply_filters(stmt, q)
-
-    if q.date_range.type != DateRangeType.ALL_TIME and q.date_range.start:
-        date_col = (VendorPayout.payout_date
-                    if t is VendorPayout.__table__
-                    else Transaction.transaction_date)
-        stmt = stmt.where(date_col >= q.date_range.start,
-                          date_col <= q.date_range.end)
 
     if is_agg:
-        if q.group_by:
-            stmt = stmt.group_by(*[c.name for c in _group_expr(q)]) \
-                       .order_by(sa.desc(sa.literal_column("value")))
-        else:
+        cols = [_metric_expr(q)]
+        group_exprs: list = []
+        for dim in q.group_by:
+            for i, expr in enumerate(_DIMENSION_TO_EXPR[dim]):
+                if dim == GroupByDimension.BANK:
+                    label = "bank_code" if i == 0 else "bank_name"
+                elif dim == GroupByDimension.ACCOUNT:
+                    label = "account_id" if i == 0 else "account_number_masked"
+                else:
+                    label = dim.value
+                cols.append(expr.label(label))
+                group_exprs.append(expr)
+        stmt = _base_query(q, cols)
+        stmt = stmt.where(*_date_clause(q))
+        stmt = _apply_filters(stmt, q)
+        if group_exprs:
+            stmt = stmt.group_by(*group_exprs)
+        if q.sort == SortDirection.DESC:
             stmt = stmt.order_by(sa.desc(sa.literal_column("value")))
+        else:
+            stmt = stmt.order_by(sa.asc(sa.literal_column("value")))
         if q.limit:
             stmt = stmt.limit(q.limit)
-    else:
-        if q.intent.value in ("unreconciled_list",):
-            stmt = stmt.order_by(sa.desc(Transaction.transaction_date))
-        elif t is VendorPayout.__table__:
-            stmt = stmt.order_by(sa.desc(VendorPayout.payout_date))
-        else:
-            stmt = stmt.order_by(sa.desc(Transaction.transaction_date))
-        stmt = stmt.limit(q.limit or 50)
+        return stmt
 
+    # ----- record listing (aggregation = none) ------------------------------
+    cols = [
+        Transaction.transaction_id,
+        Transaction.transaction_date,
+        Transaction.transaction_type,
+        Transaction.description,
+        Transaction.transaction_amount,
+        Transaction.transaction_reference_id,
+        Transaction.utr_number,
+        Account.account_number,        # masked downstream, never raw in answers
+        Bank.bank_code,
+        Bank.bank_name,
+    ]
+    stmt = _base_query(q, cols)
+    stmt = stmt.where(*_date_clause(q))
+    stmt = _apply_filters(stmt, q)
+    # Sensible default ordering: biggest first for "largest transactions",
+    # newest first otherwise.
+    if q.filters.min_amount is not None and q.filters.max_amount is None:
+        stmt = stmt.order_by(sa.desc(Transaction.transaction_amount))
+    else:
+        stmt = stmt.order_by(sa.desc(Transaction.transaction_date))
+    stmt = stmt.limit(q.limit or 20)
     return stmt
 
 
-def _build_unreconciled_list(q: FinancialQuery) -> sa.Select:
-    stmt = sa.select(
-        Transaction.transaction_id, Transaction.transaction_date,
-        Vendor.vendor_name, Transaction.amount, Transaction.category,
-        Transaction.account, Transaction.reconciliation_status,
-        Transaction.description,
-    ).select_from(Transaction).outerjoin(Vendor, Transaction.vendor_id == Vendor.vendor_id)
-    if q.filters.reconciliation_status:
-        stmt = stmt.where(Transaction.reconciliation_status == q.filters.reconciliation_status)
+# ---------------------------------------------------------------------------
+# Balance / account / bank intents — these read account.available_balance,
+# not transactions, so they get their own builders.
+# ---------------------------------------------------------------------------
+
+def _balance_base(cols):
+    return (
+        sa.select(*cols)
+        .select_from(Account)
+        .join(Bank, Account.bank_code == Bank.bank_code)
+    )
+
+
+def _bank_filter(stmt, f):
+    """Bank filtering shared by account-side queries."""
+    if f.bank_code:
+        stmt = stmt.where(Bank.bank_code == f.bank_code)
+    elif f.bank_name:
+        stmt = stmt.where(Bank.bank_name.ilike(f"%{f.bank_name}%"))
+    return stmt
+
+
+def _ordered_by_value(stmt, q: FinancialQuery):
+    if q.sort == SortDirection.DESC:
+        return stmt.order_by(sa.desc(sa.literal_column("value")))
+    return stmt.order_by(sa.asc(sa.literal_column("value")))
+
+
+def build_balance_select(q: FinancialQuery) -> sa.Select:
+    """account_balance / bank_balance intents.
+
+    Shape depends on filters + group_by:
+      - filters.account_id set        → that one account
+      - group_by=[bank]               → per-bank totals ("which bank holds most")
+      - group_by=[account]            → per-account ("which account has highest balance")
+      - otherwise                     → SUM over all (filtered) accounts
+    """
+    f = q.filters
+    if f.account_id:
+        return _balance_base([
+            Account.account_id,
+            Account.account_number,
+            Account.available_balance,
+            Account.program_id,
+            Bank.bank_code,
+            Bank.bank_name,
+        ]).where(Account.account_id == f.account_id)
+    if GroupByDimension.BANK in q.group_by:
+        stmt = _balance_base([
+            Bank.bank_code,
+            Bank.bank_name,
+            sa.func.sum(Account.available_balance).label("value"),
+            sa.func.count(sa.distinct(Account.account_id)).label("account_count"),
+        ]).group_by(Bank.bank_code, Bank.bank_name)
+        stmt = _bank_filter(stmt, f)
+        return _ordered_by_value(stmt, q).limit(q.limit or 10)
+    if GroupByDimension.ACCOUNT in q.group_by:
+        stmt = _balance_base([
+            Account.account_id,
+            Account.account_number,
+            Account.available_balance.label("value"),
+            Account.program_id,
+            Bank.bank_code,
+            Bank.bank_name,
+        ])
+        stmt = _bank_filter(stmt, f)
+        return _ordered_by_value(stmt, q).limit(q.limit or 10)
+    stmt = _balance_base([
+        sa.func.sum(Account.available_balance).label("value"),
+        sa.func.count(sa.distinct(Account.account_id)).label("account_count"),
+    ])
+    return _bank_filter(stmt, f)
+
+
+def build_account_list(q: FinancialQuery) -> sa.Select:
+    stmt = _balance_base([
+        Account.account_id,
+        Account.account_number,
+        Account.available_balance,
+        Account.program_id,
+        Bank.bank_code,
+        Bank.bank_name,
+    ])
+    stmt = _bank_filter(stmt, q.filters)
+    if q.sort == SortDirection.DESC:
+        stmt = stmt.order_by(sa.desc(Account.available_balance))
     else:
-        stmt = stmt.where(Transaction.reconciliation_status == "unreconciled")
-    if q.date_range.type != DateRangeType.ALL_TIME and q.date_range.start:
-        stmt = stmt.where(Transaction.transaction_date >= q.date_range.start,
-                          Transaction.transaction_date <= q.date_range.end)
-    if q.limit:
-        stmt = stmt.limit(q.limit)
-    return stmt.order_by(sa.desc(Transaction.transaction_date))
+        stmt = stmt.order_by(sa.asc(Account.available_balance))
+    return stmt.limit(q.limit or 20)
+
+
+def build_account_count_by_bank(q: FinancialQuery) -> sa.Select:
+    stmt = _balance_base([
+        Bank.bank_code,
+        Bank.bank_name,
+        sa.func.count(sa.distinct(Account.account_id)).label("value"),
+    ]).group_by(Bank.bank_code, Bank.bank_name)
+    stmt = _bank_filter(stmt, q.filters)
+    return _ordered_by_value(stmt, q).limit(q.limit or 10)
+
+
+def build_monthly_trend(q: FinancialQuery) -> sa.Select:
+    """monthly_trend: aggregate grouped by calendar month.
+
+    Month is extracted as (year, month) two integer columns — portable across
+    MySQL, SQLite, and PostgreSQL (unlike DATE_FORMAT / strftime / to_char).
+    The engine renders the 'YYYY-MM' label.
+    """
+    agg = q.aggregation
+    if agg == Aggregation.COUNT:
+        metric = sa.func.count(sa.distinct(Transaction.transaction_id)).label("value")
+    elif agg in _AGG_TO_FN:
+        metric = _AGG_TO_FN[agg](Transaction.transaction_amount).label("value")
+    else:
+        raise ValueError("monthly_trend requires sum/count/avg/max/min aggregation")
+    year = sa.extract("year", Transaction.transaction_date)
+    month = sa.extract("month", Transaction.transaction_date)
+    year_l = year.label("txn_year")
+    month_l = month.label("txn_month")
+    stmt = _base_query(q, [year_l, month_l, metric])
+    stmt = stmt.where(*_date_clause(q))
+    stmt = _apply_filters(stmt, q)
+    stmt = stmt.group_by(year, month)
+    return stmt.order_by(sa.asc(year), sa.asc(month))
