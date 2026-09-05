@@ -6,7 +6,7 @@ python-dotenv==1.0.0
 
 langchain==0.1.11
 langchain-openai==0.0.5
-# langchain-community==0.0.18
+langchain-community
 langchain-core==0.1.32
 
 chromadb==0.4.22
@@ -24,3 +24,4 @@ unstructured==0.12.6
 pytest==7.4.4
 pytest-asyncio==0.23.3
 httpx==0.26.0
+scalar_fastapi
