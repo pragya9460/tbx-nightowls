@@ -262,12 +262,30 @@ class RuleBasedProvider(LLMProvider):
         if re.search(r"balance|how much (money|do i have)|have in\b|which bank holds|holds the most money", q) \
            and not _CREDIT_CUES.search(q) and not mentions_transactions:
             return self._balance_intent(q, context, today)
-        # "how many accounts ... per/with each bank" BEFORE the generic list gate
-        if re.search(r"how many accounts", q) or (
+        # "how many accounts ... per/with each bank" BEFORE the generic list
+        # gate. Also catches "how many bank accounts …" (the word "bank"
+        # sits between "how many" and "accounts").
+        if re.search(r"how many (?:\w+ )?accounts?", q) or (
                 not mentions_transactions
                 and re.search(r"accounts?.*(each bank|per bank)", q)):
             return self._validated(
                 intent=Intent.BANK_ACCOUNT_COUNT,
+                metric=Metric.TRANSACTION_COUNT,
+                aggregation=Aggregation.COUNT,
+                filters=self._bank_filter(q),
+                range_spec={"type": "all_time"},
+            )
+        # "how many banks (are there)" — count of banks in the dataset, NOT
+        # transactions and NOT accounts. Runs after the accounts-per-bank
+        # gate above (so "how many accounts per bank" wins) but before the
+        # generic account-list gate. "bank accounts" is about accounts —
+        # never routed here.
+        if not mentions_transactions and re.search(
+                r"\bhow many\b.*\bbanks?\b|\b(count|number) of banks?\b"
+                r"|\bbanks?\b.*\b(how many|in total|total number)\b", q) \
+                and not re.search(r"\baccounts?\b", q):
+            return self._validated(
+                intent=Intent.BANK_COUNT,
                 metric=Metric.TRANSACTION_COUNT,
                 aggregation=Aggregation.COUNT,
                 filters=self._bank_filter(q),
@@ -496,6 +514,18 @@ class RuleBasedProvider(LLMProvider):
 
     def _transaction_intent(self, question: str, context: dict, today: dt.date) -> QueryUnderstanding:
         q = question.lower().strip()
+
+        # Scope default: a COUNT question that names no period is a dataset
+        # scoping question ("how many transactions belong to HDFC?") → all
+        # time. Money questions keep the last-month default (demo contract).
+        count_named_period = re.search(
+            r"\b(last|this|past|previous|in|on|between|during|since|yesterday|today)\b"
+            r"|\b\d{4}\b|\bmonth|week|year|day", q)
+        count_wants_all_time = (
+            re.search(r"\bhow many\b|\b(count|number) of\b", q) is not None
+            and count_named_period is None
+        )
+
         # ----- transaction type -------------------------------------------------
         if _CREDIT_CUES.search(q) and not _DEBIT_CUES.search(q):
             txn_type = "credit"
@@ -533,16 +563,20 @@ class RuleBasedProvider(LLMProvider):
             if len(candidate) >= 3:
                 # drop trailing punctuation ("Reliance.")
                 candidate = candidate.rstrip(".,;:!?")
-                desc = candidate.upper()
+                # a bare channel word is a channel cue, not a counterparty
+                if candidate.upper() not in self._CHANNELS:
+                    desc = candidate.upper()
 
         # ----- count vs amount ----------------------------------------------------
         if re.search(r"how many|count of|number of", q):
+            range_spec = ({"type": "all_time"} if count_wants_all_time
+                          else self._date_spec(q, today))
             return self._validated(
                 intent=Intent.TRANSACTION_SUMMARY,
                 metric=Metric.TRANSACTION_COUNT,
                 aggregation=Aggregation.COUNT,
                 filters=self._txn_filters(q, txn_type, desc),
-                range_spec=self._date_spec(q, today),
+                range_spec=range_spec,
             )
 
         # ----- which month had the highest (BEFORE generic "highest") ----------
@@ -716,11 +750,27 @@ class RuleBasedProvider(LLMProvider):
             filters["transaction_type"] = txn_type
         if desc:
             filters["description_contains"] = desc
+        else:
+            # Payment-channel cues: "made through NEFT", "IMPS transactions",
+            # "via UPI", "RTGS payments". Descriptions start with the channel
+            # prefix in both the loaded dataset and the TBX sample.
+            channel = self._extract_channel(q)
+            if channel:
+                filters["description_contains"] = channel
         if min_amount is not None:
             filters["min_amount"] = min_amount
         if max_amount is not None:
             filters["max_amount"] = max_amount
         return filters
+
+    _CHANNELS = ("NEFT", "IMPS", "RTGS", "UPI", "FT")
+
+    def _extract_channel(self, q: str) -> str | None:
+        """'through NEFT' / 'via IMPS' / 'NEFT transactions' → channel prefix."""
+        for ch in self._CHANNELS:
+            if re.search(rf"\b{ch}\b", q, re.IGNORECASE):
+                return ch
+        return None
 
     def _bank_filter(self, q: str) -> dict:
         bank = self._extract_bank(q)

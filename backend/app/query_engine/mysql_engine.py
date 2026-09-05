@@ -161,6 +161,8 @@ class MySQLQueryEngine:
             return self._execute_account_list(q)
         if q.intent == Intent.BANK_ACCOUNT_COUNT:
             return self._execute_bank_account_count(q)
+        if q.intent == Intent.BANK_COUNT:
+            return self._execute_bank_count(q)
         if q.intent == Intent.MONTHLY_TREND:
             return self._execute_monthly_trend(q)
         if q.intent == Intent.REFERENCE_LOOKUP:
@@ -291,6 +293,17 @@ class MySQLQueryEngine:
                 "record_count": len(rows),
             },
             breakdown=rows,
+            query_metadata=self._meta(q, compiled.sql),
+        )
+
+    def _execute_bank_count(self, q: FinancialQuery) -> QueryResult:
+        compiled = compile_query(q)
+        rows = _rows_to_dicts(self._con, compiled)
+        return QueryResult(
+            summary={
+                "value": (rows[0]["value"] if rows else 0) or 0,
+                "record_count": (rows[0]["value"] if rows else 0) or 0,
+            },
             query_metadata=self._meta(q, compiled.sql),
         )
 

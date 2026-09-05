@@ -54,6 +54,9 @@ QUERY_CACHE_ENABLED: bool = os.environ.get("ARTHA_QUERY_CACHE", "1").strip().low
 )
 QUERY_CACHE_TTL_SECONDS: int = int(os.environ.get("ARTHA_QUERY_CACHE_TTL", "300"))
 
+# Semantic knowledge layer (RAG) — disabled unless ARTHA_KNOWLEDGE_ENABLED=1.
+# See app/knowledge/config.py for its own settings.
+
 
 def effective_provider() -> str:
     if LLM_PROVIDER:

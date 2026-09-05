@@ -10,3 +10,8 @@ httpx==0.28.1
 sqlglot>=25.34.0
 redis>=5.0.0
 openpyxl>=3.1.5
+python-multipart>=0.0.9
+# Knowledge layer (RAG) — optional at runtime, installed unconditionally so
+# the image is uniform. ChromaDB pulls onnxruntime for local MiniLM embeddings.
+chromadb>=0.5.0
+pypdf>=4.0.0

@@ -54,6 +54,7 @@ class Intent(str, Enum):
     # Bank intelligence
     BANK_BALANCE = "bank_balance"                 # balance per bank / which bank holds most
     BANK_ACCOUNT_COUNT = "bank_account_count"     # accounts per bank
+    BANK_COUNT = "bank_count"                     # how many banks are in the dataset
     # Reference search
     REFERENCE_LOOKUP = "reference_lookup"         # find by reference id or UTR
 
@@ -234,6 +235,12 @@ class FinancialQuery(BaseModel):
         if self.intent == Intent.BANK_ACCOUNT_COUNT and self.metric != Metric.TRANSACTION_COUNT:
             # count of accounts reuses the count metric
             raise ValueError("bank_account_count requires metric 'transaction_count' (count of accounts)")
+        if self.intent == Intent.BANK_COUNT and (
+            self.metric != Metric.TRANSACTION_COUNT or self.aggregation != Aggregation.COUNT
+        ):
+            raise ValueError(
+                "bank_count requires metric 'transaction_count' and aggregation 'count' (count of banks)"
+            )
         if self.intent not in balance_intents | {Intent.ACCOUNT_LIST} and self.metric == Metric.BALANCE:
             raise ValueError(
                 f"metric 'balance' only applies to account_balance/bank_balance/account_list intents"

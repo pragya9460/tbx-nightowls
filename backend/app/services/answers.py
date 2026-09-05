@@ -134,6 +134,13 @@ def generate_answer(q: FinancialQuery, result: QueryResult,
             return f"Accounts by bank: {lines}."
         return "No accounts found."
 
+    if q.intent.value == "bank_count":
+        if value == 0:
+            return "No banks found in the dataset."
+        if q.filters.bank_code or q.filters.bank_name:
+            return f"That bank is in the dataset — {count} matching bank entr{'y' if count == 1 else 'ies'} found."
+        return f"There are {count} bank{'s' if count != 1 else ''} in the dataset."
+
     # ----- monthly trend ------------------------------------------------------
     if q.intent.value == "monthly_trend":
         peak = result.summary.get("peak_month")
@@ -209,6 +216,13 @@ def generate_answer(q: FinancialQuery, result: QueryResult,
     if value == 0 and count == 0:
         return f"No {type_word} transactions recorded for {period}.".strip()
     type_suffix = f" {type_word}" if type_word else ""
+    if q.metric == Metric.TRANSACTION_COUNT:
+        # A count is not money — never render it with ₹.
+        period_phrase = "" if dr.get("type") == "all_time" else f" in {period}"
+        return (
+            f"You made {count:,}{type_suffix} transaction"
+            f"{'s' if count != 1 else ''}{period_phrase}."
+        )
     return (
         f"You {verb} {format_inr(value)} in {period} across "
         f"{count:,}{type_suffix} transaction{'s' if count != 1 else ''}."

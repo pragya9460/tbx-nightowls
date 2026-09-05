@@ -374,12 +374,27 @@ LIMIT {_p('limit_n')}
     return _finalize(sql, params)
 
 
+def _build_bank_count(q: FinancialQuery) -> CompiledQuery:
+    params: dict[str, object] = {}
+    bank_where = _bank_filters(q, params)
+    where_sql = f"WHERE {' AND '.join(bank_where)}" if bank_where else ""
+    sql = f"""
+SELECT
+  COUNT(*) AS value
+FROM bank b
+{where_sql}
+""".strip()
+    return _finalize(sql, params)
+
+
 def compile_query(q: FinancialQuery) -> CompiledQuery:
     """Compile a validated FinancialQuery into a MySQL SELECT."""
     if q.intent in (Intent.ACCOUNT_BALANCE, Intent.BANK_BALANCE):
         return _build_balance(q)
     if q.intent == Intent.ACCOUNT_LIST:
         return _build_account_list(q)
+    if q.intent == Intent.BANK_COUNT:
+        return _build_bank_count(q)
     if q.intent == Intent.BANK_ACCOUNT_COUNT:
         return _build_account_count(q)
     if q.intent == Intent.MONTHLY_TREND:
@@ -396,6 +411,7 @@ def compile_count(q: FinancialQuery) -> CompiledQuery:
         Intent.BANK_BALANCE,
         Intent.ACCOUNT_LIST,
         Intent.BANK_ACCOUNT_COUNT,
+        Intent.BANK_COUNT,
     ):
         params: dict[str, object] = {}
         if q.filters.account_id:

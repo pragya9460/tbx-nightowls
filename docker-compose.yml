@@ -40,8 +40,15 @@ services:
       ARTHA_REDIS_URL: redis://redis:6379/0
       ARTHA_QUERY_CACHE: "1"
       ARTHA_QUERY_CACHE_TTL: "300"
+      # Semantic knowledge layer (RAG over mounted docs).
+      ARTHA_KNOWLEDGE_ENABLED: "1"
+      ARTHA_KNOWLEDGE_DATA_DIR: /app/knowledge-data
+      ARTHA_CHROMA_PERSIST_DIR: /app/knowledge-store
     volumes:
-      - ./data:/app/seed-data:ro
+      # Official TBX-provided dataset (20k transactions, 1,000 accounts).
+      - ./dataset:/app/seed-data:ro
+      - ./knowledge:/app/knowledge-data:ro
+      - knowledge_store:/app/knowledge-store
     ports:
       - "8000:8000"
     depends_on:
@@ -62,3 +69,4 @@ services:
 
 volumes:
   mysql_data:
+  knowledge_store:

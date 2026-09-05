@@ -12,7 +12,7 @@ results with `cd backend && .venv/bin/python -m pytest -q`.
 | **4. Verifiable answers** | ✅ | Every response: `answer` + `evidence.how_calculated` (date range, operation, records_matched, filters, sql, cache_hit) + `breakdown`/`records` (≤15, masked) + comparison block for both periods. UI renders ANSWER / HOW I GOT THIS / SOURCE RECORDS zones. Evidence is built from the engine result — same records the calculation used (tested). | `test_api_grounding.py` (13), `test_grounding_contract.py::test_fabricated_evidence_record_does_not_propagate` | "Show me the records behind that." |
 | **5. Hallucination guardrails** | ✅ | Explicit states in every response: `supported` / `empty_data` / `ambiguous` / `unsupported` / `invalid`. Unsupported domains (payroll, taxes, invoices, vendors, profit, forecasts, escrow, customers, loans) refused with the missing domain named. Ambiguity clarified ("How much moved?" → clarification; bare "spent" → debit, stated explicitly). Invalid structured queries rejected pre-execution. | `test_guardrails.py` (29), `test_status_confidence.py` (state tests) | "How much did we spend on employee salaries?" → refusal |
 | **6. Lightweight model** | ✅ | `claude-haiku-4-5` default (smallest capable); provider abstraction (`build_provider`); rule-based provider runs the full benchmark with **0 tokens**; eval captures provider, model, latency, **token usage**, failure category. Foundation doc: `docs/model-evaluation.md` with thresholds and rationale. | eval harness (33 cases, `results.json`), `test_query_understanding.py` | (benchmark-driven; no single demo question) |
-| **7. Multi-turn conversation** | ✅ | Structured `ConversationContext` (intent/metric/type/bank/range/filters) — no transcript dumping. Month-swap ("What about July?"), **filter refinement** ("Only those above ₹50,000." inherits listing + merges threshold), comparison ("How does that compare…"). | `test_query_understanding.py` context tests, `test_status_confidence.py` refinement tests (5, incl. end-to-end) | "What about July?" |
+| **7. Multi-turn conversation** | ✅ | Structured `ConversationContext` (intent/metric/type/bank/range/filters) — no transcript dumping. Month-swap ("What about July?"), **filter refinement** ("Only those above ₹50,000." inherits listing + merges threshold), comparison ("How does that compare…"). Bank-count questions ("How many total number of banks are there") route to a dedicated `bank_count` intent (compiled SELECT over `bank`). | `test_query_understanding.py` context tests, `test_status_confidence.py` refinement tests (5, incl. end-to-end), `test_bank_count.py` | "What about July?" |
 | **8. Explainability** | ✅ | Evidence exposes structured audit metadata: intent/metric (in `query`), date range, filters, records matched, operation, grouping, result (`summary`), breakdown, source records — via `query` + `evidence` fields. No chain-of-thought exposed (none exists — answers are templated). | `test_api_grounding.py` grounding tests, contract tests | Any question → expand "✓ Grounded" |
 
 ## Cross-cutting requirements
@@ -30,6 +30,19 @@ results with `cd backend && .venv/bin/python -m pytest -q`.
 | **Confidence signalling** | ✅ | Interpretable, categorical — no fake probabilities: `high` (≥5 matched records, deterministic), `limited` (valid query, 1–4 matched records), `no_matches` (valid query, zero records — a real zero), `none` (refusal/invalid, nothing executed). Each response includes `confidence_basis` explaining the signal in words; the UI renders a colour-coded pill with the basis as tooltip. |
 | **Anomaly callout** | ✅ | Deterministic rule in `app/services/anomaly.py`: transaction is anomalous iff `amount > multiplier × counterparty historical_average` (history excludes the transaction under test; ≥5 records required else never flagged). Multiplier/min-history env-configurable (`ARTHA_ANOMALY_MULTIPLIER`, `ARTHA_ANOMALY_MIN_HISTORY`). No ML, no LLM judgement. API `GET /api/twin/anomalies`; chat "Any unusual transactions?"; surfaced in the UI Alerts card. |
 | **CSV / Excel export** | ✅ | `POST /api/export/evidence` returns CSV (default) or Excel (openpyxl); rows are passed verbatim from the evidence block, so exports contain exactly what was displayed (masked, capped — enforced by test, incl. CSV==Excel parity). |
+
+## Semantic knowledge layer (ported from the `PythonCode/rag-api` prototype)
+
+First-class RAG inside the grounded backend — the prototype's capability,
+rebuilt without langchain and under Artha's grounding rules. Off by default
+(`ARTHA_KNOWLEDGE_ENABLED=1` in docker-compose enables it).
+
+| Capability | Status | Notes |
+|---|---|---|
+| **Unified `POST /api/ask`** | ✅ | rag-api request shape: `{question, top_k, threshold, filter, query_type}` with `auto`/`analytics`/`semantic`. `auto` = grounded engine first; the semantic path is consulted only when the engine **refuses** (unsupported/ambiguous/invalid). A real zero from the engine stays a real zero (tested). |
+| **Knowledge store** | ✅ | ChromaDB (persistent volume) + local ONNX MiniLM embeddings — no API key, no network at query time. Seeded at startup from `knowledge/` mount; ingest text/upload/search/collections endpoints under `/api/knowledge/*`. |
+| **PII masking at ingestion** | ✅ | `account_number` / `utr_number` masked before embedding — content, metadata, and CSV-row paths all pass the mask boundary (enforced by `test_knowledge.py`, one-way masks verified). |
+| **Grounded RAG answers** | ✅ | LLM sees only retrieved passages; honest empty state when nothing matches; extractive fallback (no LLM) when no Anthropic key. |
 
 ## Financial Intelligence / Financial Twin (this pass)
 
