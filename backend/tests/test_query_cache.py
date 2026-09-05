@@ -64,7 +64,7 @@ def test_put_get_roundtrip(monkeypatch):
     })
     result = QueryResult(
         summary={"value": 42.0, "record_count": 1},
-        query_metadata={"backend": "duckdb", "sql": "SELECT 1"},
+        query_metadata={"backend": "mysql", "sql": "SELECT 1"},
     )
     put_cached_result(q, result)
     hit = get_cached_result(q)

@@ -238,3 +238,30 @@ def test_comparison_followup():
     assert follow["intent"] == "comparison"
     assert follow["comparison"]["against"] == "previous_period"
     assert follow["filters"]["transaction_type"] == "debit"
+
+
+def test_july_vs_august_named_comparison():
+    query = q("compare my expense in july vs august")
+    assert query["intent"] == "comparison"
+    assert query["filters"]["transaction_type"] == "debit"
+    assert query["comparison"]["against"] == "named_month"
+    assert query["comparison"]["month"] == "august"
+    assert "-07-" in query["date_range"]["start"]
+    assert query["date_range"]["label"] == "Jul 2026"
+
+
+def test_vendor_expenses_july_maps_to_debit_spend():
+    """No vendor table — 'vendor expenses' = debit transaction spend."""
+    query = q("What are the expenses for july for vendors")
+    assert query["intent"] == "transaction_summary"
+    assert query["filters"]["transaction_type"] == "debit"
+    assert query["aggregation"] == "sum"
+    assert query["date_range"]["start"].startswith("202")  # resolved July
+    assert "-07-" in query["date_range"]["start"]
+
+
+def test_vendor_spend_not_refused():
+    resp = u("How much did we spend on vendors last month?")
+    assert resp.refusal_reason is None
+    assert resp.query is not None
+    assert resp.query["filters"]["transaction_type"] == "debit"

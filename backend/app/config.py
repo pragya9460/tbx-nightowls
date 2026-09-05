@@ -3,23 +3,35 @@ from __future__ import annotations
 
 import os
 
-# DuckDB file path (default: <repo>/data/finance.duckdb).
-DUCKDB_PATH: str = os.environ.get("ARTHA_DUCKDB_PATH", "")
+# MySQL connection string (required). Example:
+# mysql://artha:artha@127.0.0.1:3306/artha
+DATABASE_URL: str = os.environ.get(
+    "ARTHA_DATABASE_URL",
+    os.environ.get("ARTHA_MYSQL_URL", "mysql://artha:artha@127.0.0.1:3306/artha"),
+).strip()
 
-# CSV directory used when bootstrapping DuckDB.
+# CSV directory used when bootstrapping MySQL.
 DATA_DIR: str = os.environ.get("ARTHA_DATA_DIR", "")
 
 ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# Provider selection: "anthropic" (LLM query understanding) or "rule_based"
-# (deterministic fallback used when no API key is configured).
+# Provider: "ollama" (local LLM), "anthropic", or "rule_based" (no LLM).
+# Empty = anthropic if ANTHROPIC_API_KEY is set, else rule_based.
 LLM_PROVIDER: str = os.environ.get("ARTHA_LLM_PROVIDER", "")
 
-# Default to the smallest model that reliably handles structured extraction.
-LLM_MODEL: str = os.environ.get("ARTHA_MODEL", "claude-haiku-4-5")
+# Model id for the active provider (Ollama tag or Anthropic model name).
+LLM_MODEL: str = os.environ.get(
+    "ARTHA_MODEL",
+    os.environ.get("ARTHA_LLM_MODEL", "claude-haiku-4-5"),
+)
+
+# Ollama OpenAI-compatible / native API base (no trailing slash).
+OLLAMA_BASE_URL: str = os.environ.get(
+    "ARTHA_OLLAMA_BASE_URL", "http://127.0.0.1:11434"
+).rstrip("/")
 
 LLM_MAX_RETRIES: int = int(os.environ.get("ARTHA_LLM_MAX_RETRIES", "1"))
-LLM_TIMEOUT_SECONDS: float = float(os.environ.get("ARTHA_LLM_TIMEOUT", "30"))
+LLM_TIMEOUT_SECONDS: float = float(os.environ.get("ARTHA_LLM_TIMEOUT", "60"))
 
 CORS_ORIGINS: list[str] = [
     o.strip()
@@ -47,3 +59,12 @@ def effective_provider() -> str:
     if LLM_PROVIDER:
         return LLM_PROVIDER
     return "anthropic" if ANTHROPIC_API_KEY else "rule_based"
+
+
+def effective_model() -> str:
+    """Model string for the active provider (sensible Ollama default)."""
+    if effective_provider() == "ollama" and (
+        not LLM_MODEL or LLM_MODEL.startswith("claude")
+    ):
+        return os.environ.get("ARTHA_MODEL", "qwen2.5-coder:7b")
+    return LLM_MODEL or "claude-haiku-4-5"

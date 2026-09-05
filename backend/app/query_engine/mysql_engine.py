@@ -1,17 +1,17 @@
-"""DuckDB query engine — FinancialQuery → compiled SQL → QueryResult.
+"""MySQL query engine — FinancialQuery → compiled SQL → QueryResult.
 
-Every number comes from DuckDB; the LLM never sees raw SQL generation.
-Sensitive fields (account_number, utr_number) are masked here, at the engine
-boundary, so no downstream code can accidentally leak them.
+Every number comes from MySQL; the LLM never generates SQL. Sensitive fields
+(account_number, utr_number) are masked at the engine boundary.
 """
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
-import duckdb
+import pymysql
+from pymysql.connections import Connection
 
 from ..schemas.query import (
     Aggregation,
@@ -21,8 +21,9 @@ from ..schemas.query import (
     Intent,
 )
 from .cache import get_cached_result, put_cached_result
-from .duckdb_builder import compile_count, compile_query
-from .duckdb_store import connect_readonly, default_duckdb_path, ensure_duckdb
+from .mysql_builder import compile_count, compile_query
+from .mysql_store import connect as mysql_connect
+from .mysql_url import mask_mysql_url, normalize_mysql_url
 from .result import QueryResult
 
 
@@ -36,10 +37,16 @@ def _cell(v: Any) -> Any:
     return v
 
 
-def _rows_to_dicts(con: duckdb.DuckDBPyConnection, compiled) -> list[dict]:
-    cur = con.execute(compiled.sql, compiled.params)
-    cols = [d[0] for d in cur.description]
-    return [{cols[i]: _cell(row[i]) for i in range(len(cols))} for row in cur.fetchall()]
+def _rows_to_dicts(con: Connection, compiled) -> list[dict]:
+    with con.cursor() as cur:
+        cur.execute(compiled.sql, compiled.params)
+        rows = cur.fetchall()
+    if not rows:
+        return []
+    if isinstance(rows[0], dict):
+        return [{k: _cell(v) for k, v in row.items()} for row in rows]
+    raise TypeError("expected DictCursor rows from MySQL connection")
+
 
 
 def mask_account_number(acc: str | None) -> str | None:
@@ -67,23 +74,49 @@ def _mask_record(record: dict) -> dict:
     return out
 
 
-class DuckDBQueryEngine:
-    """Read-only DuckDB executor with optional Redis/memory result cache."""
+def _url_fingerprint(url: str) -> str:
+    return hashlib.sha256(normalize_mysql_url(url).encode("utf-8")).hexdigest()[:16]
 
-    def __init__(self, con: duckdb.DuckDBPyConnection, *, owns_connection: bool = True):
+
+class MySQLQueryEngine:
+    """Read-only MySQL executor with optional Redis/memory result cache."""
+
+    def __init__(
+        self,
+        con: Connection,
+        *,
+        database_url: str,
+        owns_connection: bool = True,
+    ):
         self._con = con
         self._owns = owns_connection
+        self.database_url = database_url
+        self.database_url_masked = mask_mysql_url(database_url)
+        self._cache_scope = _url_fingerprint(database_url)
+        self._configure_session()
+
+    def _configure_session(self) -> None:
+        with self._con.cursor() as cur:
+            try:
+                cur.execute("SET SESSION TRANSACTION READ ONLY")
+            except pymysql.Error:
+                pass
+            try:
+                cur.execute("SET SESSION MAX_EXECUTION_TIME=10000")
+            except pymysql.Error:
+                pass
 
     @classmethod
-    def from_path(cls, db_path: Path | str | None = None) -> "DuckDBQueryEngine":
-        path = Path(db_path) if db_path else default_duckdb_path()
-        ensure_duckdb(db_path=path)
-        return cls(connect_readonly(path), owns_connection=True)
+    def from_url(cls, database_url: str) -> "MySQLQueryEngine":
+        url = normalize_mysql_url(database_url)
+        con = mysql_connect(url, autocommit=True)
+        return cls(con, database_url=url, owns_connection=True)
 
     @classmethod
-    def from_connection(cls, con: duckdb.DuckDBPyConnection) -> "DuckDBQueryEngine":
-        """Wrap an existing connection (e.g. in-memory test DB)."""
-        return cls(con, owns_connection=False)
+    def from_connection(
+        cls, con: Connection, *, database_url: str
+    ) -> "MySQLQueryEngine":
+        return cls(con, database_url=database_url, owns_connection=False)
 
     def close(self) -> None:
         if self._owns and self._con is not None:
@@ -97,13 +130,13 @@ class DuckDBQueryEngine:
             pass
 
     def execute(self, q: FinancialQuery) -> QueryResult:
-        cached = get_cached_result(q)
+        cached = get_cached_result(q, scope=self._cache_scope)
         if cached is not None:
             return cached
 
         result = self._execute_uncached(q)
         result.query_metadata["cache_hit"] = False
-        put_cached_result(q, result)
+        put_cached_result(q, result, scope=self._cache_scope)
         return result
 
     def _meta(self, q: FinancialQuery, sql: str | None = None) -> dict:
@@ -115,7 +148,7 @@ class DuckDBQueryEngine:
             "date_range": q.date_range.model_dump(mode="json", exclude_none=True),
             "group_by": [g.value for g in q.group_by],
             "limit": q.limit,
-            "backend": "duckdb",
+            "backend": "mysql",
         }
         if sql:
             meta["sql"] = sql
@@ -263,8 +296,14 @@ class DuckDBQueryEngine:
 
     def _count_matched(self, q: FinancialQuery) -> int:
         compiled = compile_count(q)
-        row = self._con.execute(compiled.sql, compiled.params).fetchone()
-        return int(row[0] or 0) if row else 0
+        with self._con.cursor() as cur:
+            cur.execute(compiled.sql, compiled.params)
+            row = cur.fetchone()
+        if not row:
+            return 0
+        if isinstance(row, dict):
+            return int(next(iter(row.values())) or 0)
+        return int(row[0] or 0)
 
     def execute_comparison(
         self,
@@ -273,12 +312,6 @@ class DuckDBQueryEngine:
         previous_range_start: dt.date,
         previous_range_end: dt.date,
     ) -> QueryResult:
-        """Execute the same query against an explicit comparison date window.
-
-        Callers must pass the already-resolved comparison bounds. Do not
-        rewrite them here — named-month compares (July vs August) would
-        otherwise collapse to previous-calendar-month.
-        """
         prev_start, prev_end = previous_range_start, previous_range_end
         length_days = (prev_end - prev_start).days + 1
         if length_days >= 28 and prev_start.day == 1 and prev_end.day >= 28:
@@ -300,12 +333,24 @@ class DuckDBQueryEngine:
         allowed = {
             "bank": "bank",
             "account": "account",
-            "transaction": '"transaction"',
+            "transaction": "`transaction`",
             "banks": "bank",
             "accounts": "account",
-            "transactions": '"transaction"',
+            "transactions": "`transaction`",
         }
         if table not in allowed:
             raise ValueError(f"table '{table}' not allowlisted")
         quoted = allowed[table]
-        return int(self._con.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()[0])
+        with self._con.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM {quoted}")
+            row = cur.fetchone()
+        if isinstance(row, dict):
+            return int(row.get("cnt") or 0)
+        return int(row[0] if row else 0)
+
+    def ping(self) -> bool:
+        try:
+            self._con.ping(reconnect=True)
+            return True
+        except pymysql.Error:
+            return False

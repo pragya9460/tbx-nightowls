@@ -93,11 +93,12 @@ def reset_cache_backend() -> None:
         _backend = None
 
 
-def cache_key_for_query(q: FinancialQuery) -> str:
+def cache_key_for_query(q: FinancialQuery, scope: str | None = None) -> str:
     payload = q.model_dump(mode="json", exclude_none=True)
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return f"artha:query:{digest}"
+    prefix = f"artha:query:{scope}:" if scope else "artha:query:"
+    return f"{prefix}{digest}"
 
 
 def result_from_cache_dict(data: dict[str, Any]) -> QueryResult:
@@ -113,10 +114,10 @@ def result_to_cache_dict(result: QueryResult) -> dict[str, Any]:
     return result.to_dict()
 
 
-def get_cached_result(q: FinancialQuery) -> QueryResult | None:
+def get_cached_result(q: FinancialQuery, scope: str | None = None) -> QueryResult | None:
     if not config.QUERY_CACHE_ENABLED:
         return None
-    key = cache_key_for_query(q)
+    key = cache_key_for_query(q, scope=scope)
     data = get_cache_backend().get(key)
     if not data:
         return None
@@ -126,10 +127,12 @@ def get_cached_result(q: FinancialQuery) -> QueryResult | None:
     return result
 
 
-def put_cached_result(q: FinancialQuery, result: QueryResult) -> None:
+def put_cached_result(
+    q: FinancialQuery, result: QueryResult, scope: str | None = None
+) -> None:
     if not config.QUERY_CACHE_ENABLED:
         return
-    key = cache_key_for_query(q)
+    key = cache_key_for_query(q, scope=scope)
     payload = result_to_cache_dict(result)
     # Don't persist a previous hit flag into the store.
     meta = dict(payload.get("query_metadata") or {})

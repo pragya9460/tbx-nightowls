@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import calendar as _calendar
 import datetime as dt
+import re
 from enum import Enum
 from typing import Literal
 
@@ -142,13 +143,26 @@ class DateRange(BaseModel):
 
 
 class ComparisonSpec(BaseModel):
-    """Second date range for comparison intents."""
+    """Second date range for comparison intents.
+
+    - previous_period / previous_month: period immediately before date_range
+    - previous_year: same calendar window one year earlier
+    - named_month: explicit second month (e.g. "July vs August") — set month
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    against: Literal["previous_period", "previous_month", "previous_year"] = (
-        "previous_period"
-    )
+    against: Literal[
+        "previous_period", "previous_month", "previous_year", "named_month"
+    ] = "previous_period"
+    month: str | None = None
+    year: int | None = None
+
+    @model_validator(mode="after")
+    def _named_month_requires_month(self) -> "ComparisonSpec":
+        if self.against == "named_month" and not self.month:
+            raise ValueError("named_month comparison requires comparison.month")
+        return self
 
 
 class QueryFilters(BaseModel):
@@ -448,14 +462,82 @@ def resolve_date_range(today: dt.date, spec: dict) -> DateRange:
     raise ValueError(f"unknown date range type: {range_type}")
 
 
+def _is_full_calendar_month(dr: DateRange) -> bool:
+    if dr.start is None or dr.end is None or dr.start.day != 1:
+        return False
+    return dr.end == month_bounds(dr.start.year, dr.start.month)[1]
+
+
 def previous_period(dr: DateRange) -> DateRange:
-    """The immediately preceding period of equal length (for comparisons)."""
+    """The immediately preceding period (for comparisons).
+
+    Full calendar months snap to the previous calendar month (July → June),
+    not an equal-length day window (which would be May 31–Jun 30).
+    """
     if dr.start is None or dr.end is None:
         raise ValueError("cannot compute previous period of an all_time range")
+    if _is_full_calendar_month(dr):
+        y, m = dr.start.year, dr.start.month
+        if m == 1:
+            y, m = y - 1, 12
+        else:
+            m -= 1
+        start, end = month_bounds(y, m)
+        return DateRange(
+            type=DateRangeType.CUSTOM, start=start, end=end,
+            label=start.strftime("%b %Y"),
+        )
     length = (dr.end - dr.start).days + 1
     end = dr.start - dt.timedelta(days=1)
     start = end - dt.timedelta(days=length - 1)
     return DateRange(
         type=DateRangeType.CUSTOM, start=start, end=end,
-        label=f"{start.strftime('%b %-d')} – {end.strftime('%b %-d, %Y')}",
+        label=f"{start.isoformat()} to {end.isoformat()}",
     )
+
+
+_MONTH_TOKEN = (
+    r"january|february|march|april|may|june|july|august|september|"
+    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec"
+)
+_MONTH_VS_MONTH = re.compile(
+    rf"\b({_MONTH_TOKEN})\b\s*(?:vs\.?|versus|compared\s+to|compared\s+with|"
+    rf"against)\s*\b({_MONTH_TOKEN})\b",
+    re.IGNORECASE,
+)
+
+
+def parse_month_vs_month(question: str) -> tuple[str, str] | None:
+    """Extract (month_a, month_b) from 'July vs August' style questions."""
+    m = _MONTH_VS_MONTH.search(question or "")
+    if not m:
+        return None
+    return m.group(1).lower(), m.group(2).lower()
+
+
+def resolve_comparison_range(
+    today: dt.date, base: DateRange, comparison: ComparisonSpec
+) -> DateRange:
+    """Resolve the second period for a comparison intent."""
+    if comparison.against == "named_month":
+        return resolve_date_range(
+            today,
+            {
+                "type": DateRangeType.CALENDAR_MONTH.value,
+                "month": comparison.month,
+                "year": comparison.year,
+            },
+        )
+    if comparison.against == "previous_year" and base.start and base.end:
+        return DateRange(
+            type=DateRangeType.CUSTOM,
+            start=dt.date(base.start.year - 1, base.start.month, base.start.day),
+            end=dt.date(base.end.year - 1, base.end.month, base.end.day),
+            label=dt.date(
+                base.start.year - 1, base.start.month, base.start.day
+            ).strftime("%b %Y")
+            if _is_full_calendar_month(base)
+            else None,
+        )
+    # previous_period and previous_month both mean the prior calendar window
+    return previous_period(base)

@@ -1,4 +1,23 @@
 services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: artha
+      MYSQL_USER: artha
+      MYSQL_PASSWORD: artha
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./backend/sql/02-test-db.sql:/docker-entrypoint-initdb.d/02-test-db.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uartha", "-partha"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   redis:
     image: redis:7-alpine
     ports:
@@ -12,7 +31,7 @@ services:
   backend:
     build: ./backend
     environment:
-      ARTHA_DUCKDB_PATH: /app/data/finance.duckdb
+      ARTHA_DATABASE_URL: mysql://artha:artha@mysql:3306/artha
       ARTHA_DATA_DIR: /app/seed-data
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ARTHA_LLM_PROVIDER: ${ARTHA_LLM_PROVIDER:-}
@@ -20,14 +39,16 @@ services:
       ARTHA_QUERY_CACHE: "1"
       ARTHA_QUERY_CACHE_TTL: "300"
     volumes:
-      - duckdb_data:/app/data
+      - ./data:/app/seed-data:ro
     ports:
       - "8000:8000"
     depends_on:
+      mysql:
+        condition: service_healthy
       redis:
         condition: service_healthy
     command: >
-      sh -c "python scripts/load_data.py --generate --data-dir /app/seed-data --duckdb-path /app/data/finance.duckdb &&
+      sh -c "python scripts/load_data.py --data-dir /app/seed-data --database-url mysql://artha:artha@mysql:3306/artha &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
@@ -38,4 +59,4 @@ services:
       - "5173:80"
 
 volumes:
-  duckdb_data:
+  mysql_data:
