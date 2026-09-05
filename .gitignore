@@ -23,3 +23,5 @@ seed-data/
 backend/artha.db
 frontend/node_modules
 frontend/dist
+
+repomix.config.json
