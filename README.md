@@ -119,13 +119,25 @@ frontend), `Makefile`, `.env.example`.
 
 ## Quick start
 
-### Option A — Docker (everything in one command)
+### Option A — Docker
+
+Production-style build (no source mounts or hot reload):
 
 ```bash
-docker compose up --build -d
+make docker-prod
 # UI:      http://localhost:5173
 # API:     http://localhost:8000/api/health
 ```
+
+Development build with backend hot reload:
+
+```bash
+make docker-dev
+```
+
+The development command bind-mounts `backend/` and reloads Uvicorn whenever
+Python files under `backend/app/` change. The production command builds the
+backend source into its image and runs without the reload watcher.
 
 First boot generates the seed data (10 banks, 25 accounts, 8,000
 transactions, seed=42) and loads it into MySQL automatically. Set
@@ -155,8 +167,9 @@ npm install
 npm run dev        # http://localhost:5173, proxies /api → :8000
 ```
 
-Makefile shortcuts: `make docker-up`, `make install`, `make seed`, `make test`,
-`make eval`, `make api`, `make frontend`.
+Makefile shortcuts: `make docker-dev`, `make docker-prod` (`make docker-up` is
+an alias), `make install`, `make seed`, `make test`, `make eval`, `make api`,
+`make frontend`.
 
 ---
 
