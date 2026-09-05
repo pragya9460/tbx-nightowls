@@ -1,0 +1,55 @@
+[
+  {
+    "question": "How much did we spend on vendor payouts last month?",
+    "expected_intent": "vendor_payout_summary",
+    "expected_date_range": "calendar_month"
+  },
+  {
+    "question": "How much did we pay vendors last month?",
+    "expected_intent": "vendor_payout_summary",
+    "expected_date_range": "calendar_month"
+  },
+  {
+    "question": "Which transactions are still unreconciled?",
+    "expected_intent": "unreconciled_list"
+  },
+  {
+    "question": "How much did we pay ABC Suppliers last month?",
+    "expected_intent": "vendor_spend"
+  },
+  {
+    "question": "Which vendors received the most money last month?",
+    "expected_intent": "top_vendors"
+  },
+  {
+    "question": "How many transactions were unreconciled last month?",
+    "expected_intent": "transaction_count"
+  },
+  {
+    "question": "How much did we spend on employee salaries?",
+    "expected_refusal": "unsupported"
+  },
+  {
+    "question": "What was our revenue last month?",
+    "expected_refusal": "unsupported"
+  },
+  {
+    "question": "How much did we spend last month?",
+    "expected_refusal": "ambiguous"
+  },
+  {
+    "question": "How much did we pay vendors in the last 3 months?",
+    "expected_intent": "vendor_payout_summary",
+    "expected_date_range": "last_n_months"
+  },
+  {
+    "question": "How does that compare with the month before?",
+    "context": {
+      "last_intent": "vendor_payout_summary",
+      "last_metric": "payout_amount",
+      "last_date_range": {"type": "calendar_month", "start": "2026-08-01", "end": "2026-08-31", "label": "Aug 2026"},
+      "last_filters": {}
+    },
+    "expected_intent": "comparison"
+  }
+]

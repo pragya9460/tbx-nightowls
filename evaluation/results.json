@@ -1,0 +1,123 @@
+{
+  "summary": {
+    "provider": "rule_based",
+    "model": null,
+    "total": 11,
+    "correct": 11,
+    "accuracy": 1.0,
+    "avg_latency_ms": 0.0,
+    "ran_at": "2026-09-05T05:49:46.015434+00:00"
+  },
+  "results": [
+    {
+      "question": "How much did we spend on vendor payouts last month?",
+      "expected_intent": "vendor_payout_summary",
+      "got_intent": "vendor_payout_summary",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How much did we pay vendors last month?",
+      "expected_intent": "vendor_payout_summary",
+      "got_intent": "vendor_payout_summary",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "Which transactions are still unreconciled?",
+      "expected_intent": "unreconciled_list",
+      "got_intent": "unreconciled_list",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How much did we pay ABC Suppliers last month?",
+      "expected_intent": "vendor_spend",
+      "got_intent": "vendor_spend",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "Which vendors received the most money last month?",
+      "expected_intent": "top_vendors",
+      "got_intent": "top_vendors",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How many transactions were unreconciled last month?",
+      "expected_intent": "transaction_count",
+      "got_intent": "transaction_count",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How much did we spend on employee salaries?",
+      "expected_intent": null,
+      "got_intent": null,
+      "refusal_reason": "unsupported",
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "What was our revenue last month?",
+      "expected_intent": null,
+      "got_intent": null,
+      "refusal_reason": "unsupported",
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How much did we spend last month?",
+      "expected_intent": null,
+      "got_intent": null,
+      "refusal_reason": "ambiguous",
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How much did we pay vendors in the last 3 months?",
+      "expected_intent": "vendor_payout_summary",
+      "got_intent": "vendor_payout_summary",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "How does that compare with the month before?",
+      "expected_intent": "comparison",
+      "got_intent": "comparison",
+      "refusal_reason": null,
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    }
+  ]
+}

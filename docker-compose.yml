@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: artha
+      POSTGRES_PASSWORD: artha
+      POSTGRES_DB: artha
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U artha -d artha"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    environment:
+      ARTHA_DATABASE_URL: postgresql+psycopg2://artha:artha@postgres:5432/artha
+      ARTHA_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ARTHA_LLM_PROVIDER: ${ARTHA_LLM_PROVIDER:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    # Seeds the database on first boot, then serves the API.
+    command: >
+      sh -c "python scripts/load_data.py --generate --drop --data-dir /app/seed-data &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
