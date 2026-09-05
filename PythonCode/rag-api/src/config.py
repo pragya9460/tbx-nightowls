@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     similarity_top_k: int = Field(default=5, validation_alias="SIMILARITY_TOP_K")
     similarity_threshold: float = Field(
-        default=0.7, validation_alias="SIMILARITY_THRESHOLD"
+        default=0.3, validation_alias="SIMILARITY_THRESHOLD"
     )
 
     data_dir: Path = Field(default=Path("./data"), validation_alias="DATA_DIR")

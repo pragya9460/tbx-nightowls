@@ -146,9 +146,16 @@ async def upload_and_ingest(
     collection_name: Optional[str] = Form(default=None),
 ):
     """Upload and ingest files."""
+    ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc", ".csv"}
     try:
         uploaded_count = 0
         for file in files:
+            suffix = Path(file.filename).suffix.lower()
+            if suffix not in ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",
+                )
             file_path = settings.data_dir / file.filename
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
