@@ -8,7 +8,7 @@ summarized (see record_count) and paginated in the UI, never dumped.
 from __future__ import annotations
 
 from ..schemas.query import FinancialQuery
-from .engine import QueryResult
+from .result import QueryResult
 
 MAX_RECORDS_SHOWN = 15
 
@@ -37,8 +37,11 @@ def build_evidence(q: FinancialQuery, result: QueryResult) -> dict:
                 len(result.records),
             ),
             "filters": filters,
+            "sql": result.query_metadata.get("sql"),
+            "cache_hit": bool(result.query_metadata.get("cache_hit")),
         },
-        "source": "MySQL — TBX financial dataset (bank / account / transaction, deterministic query engine)",
+        "source": "DuckDB — TBX financial dataset (bank / account / transaction, deterministic query engine)",
+        "summary": result.summary,
         "grounded": True,
     }
     if result.breakdown:

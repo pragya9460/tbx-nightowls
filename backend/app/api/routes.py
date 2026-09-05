@@ -1,32 +1,35 @@
-"""REST endpoints."""
+"""REST endpoints — DuckDB-backed chat and structured query."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException
 
 from .. import config
 from ..conversation.memory import ConversationStore
-from ..db import get_db
-from ..query_engine.engine import FinancialQueryEngine
-from ..schemas.query import FinancialQuery, refusal, QueryRefusalReason
+from ..query_engine.duckdb_engine import DuckDBQueryEngine
+from ..schemas.query import FinancialQuery, QueryRefusalReason, previous_period, refusal
 from ..services.chat_service import ChatService
 from .schemas import ChatRequest, ChatResponse, HealthResponse, QueryRequest
 
 router = APIRouter(prefix="/api")
 
-# Single process-wide conversation store; keyed by conversation_id.
 conversation_store = ConversationStore()
 
 
+def _engine() -> DuckDBQueryEngine:
+    return DuckDBQueryEngine.from_path(config.DUCKDB_PATH or None)
+
+
 @router.get("/health", response_model=HealthResponse)
-def health(db: Session = Depends(get_db)) -> HealthResponse:
+def health() -> HealthResponse:
     counts: dict[str, int] = {}
     db_ok = True
     try:
-        engine = FinancialQueryEngine(db)
-        for table in ("bank", "account", "transaction"):
-            counts[table] = engine.count_total(table)
+        eng = _engine()
+        try:
+            for table in ("bank", "account", "transaction"):
+                counts[table] = eng.count_total(table)
+        finally:
+            eng.close()
     except Exception:
         db_ok = False
 
@@ -40,60 +43,62 @@ def health(db: Session = Depends(get_db)) -> HealthResponse:
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest, db: Session = Depends(get_db)) -> ChatResponse:
-    service = ChatService(db)
+def chat(req: ChatRequest) -> ChatResponse:
+    service = ChatService()
     try:
         payload = service.handle(req.question, req.conversation_id, conversation_store)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"chat processing failed: {e}")
+    finally:
+        service.engine.close()
     return ChatResponse(**payload)
 
 
 @router.post("/query", response_model=ChatResponse)
-def run_query(req: QueryRequest, db: Session = Depends(get_db)) -> ChatResponse:
-    """Execute a structured query directly — no LLM in the loop. Useful for
-    testing, the evaluation harness, and programmatic clients."""
-    service = ChatService(db)
+def run_query(req: QueryRequest) -> ChatResponse:
+    """Execute a structured query directly — no LLM. Useful for tests/eval."""
+    service = ChatService()
     try:
-        fq = FinancialQuery.model_validate(req.model_dump())
-    except Exception as e:
-        r = refusal(
-            QueryRefusalReason.INVALID_STRUCTURE,
-            f"Invalid structured query: {e}",
-        )
+        try:
+            fq = FinancialQuery.model_validate(req.model_dump())
+        except Exception as e:
+            r = refusal(
+                QueryRefusalReason.INVALID_STRUCTURE,
+                f"Invalid structured query: {e}",
+            )
+            return ChatResponse(
+                conversation_id="direct",
+                answer=r.message,
+                refusal=r.model_dump(),
+                meta={"grounded": False, "backend": "duckdb"},
+            )
+
+        comparison_result = None
+        if fq.intent.value == "comparison":
+            base = service.engine.execute(fq)
+            pp = previous_period(fq.date_range)
+            comparison_result = service.engine.execute_comparison(
+                fq, base, pp.start, pp.end
+            )
+            result = base
+        else:
+            result = service.engine.execute(fq)
+
+        from ..query_engine.evidence import build_evidence
+        from ..services.answers import generate_answer
+
+        answer = generate_answer(fq, result, comparison_result)
+        evidence = build_evidence(fq, result)
+        if comparison_result is not None:
+            evidence["comparison"] = build_evidence(fq, comparison_result)
+
         return ChatResponse(
             conversation_id="direct",
-            answer=r.message,
-            refusal=r.model_dump(),
-            meta={"grounded": False},
+            answer=answer,
+            evidence=evidence,
+            query=fq.model_dump(mode="json", exclude_none=True),
+            refusal=None,
+            meta={"grounded": True, "provider": "none", "backend": "duckdb"},
         )
-    result = service.engine.execute(fq)
-    from ..query_engine.evidence import build_evidence
-    from ..services.answers import generate_answer
-
-    comparison_result = None
-    if fq.intent.value == "comparison":
-        import datetime as dt
-
-        from ..schemas.query import previous_period
-
-        base = service.engine.execute(fq)
-        pp = previous_period(fq.date_range)
-        comparison_result = service.engine.execute_comparison(
-            fq, base, pp.start, pp.end
-        )
-        result = base
-
-    answer = generate_answer(fq, result, comparison_result)
-    evidence = build_evidence(fq, result)
-    if comparison_result is not None:
-        evidence["comparison"] = build_evidence(fq, comparison_result)
-
-    return ChatResponse(
-        conversation_id="direct",
-        answer=answer,
-        evidence=evidence,
-        query=fq.model_dump(mode="json", exclude_none=True),
-        refusal=None,
-        meta={"grounded": True, "provider": "none"},
-    )
+    finally:
+        service.engine.close()

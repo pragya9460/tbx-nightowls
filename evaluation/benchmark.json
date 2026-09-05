@@ -127,6 +127,14 @@
     "expected_refusal": "unsupported"
   },
   {
+    "question": "what is your name",
+    "expected_refusal": "unsupported"
+  },
+  {
+    "question": "Who are you?",
+    "expected_refusal": "unsupported"
+  },
+  {
     "question": "How much did we spend on vendor payouts?",
     "expected_refusal": "unsupported"
   },
