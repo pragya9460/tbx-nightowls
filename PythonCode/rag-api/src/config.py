@@ -17,11 +17,17 @@ class Settings(BaseSettings):
 
     openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    anthropic_model: str = Field(
+        default="claude-haiku-4-5-20251001", validation_alias="ANTHROPIC_MODEL"
+    )
     openai_embedding_model: str = Field(
         default="text-embedding-3-small", validation_alias="OPENAI_EMBEDDING_MODEL"
     )
 
-    vector_store_type: str = Field(default="chroma", validation_alias="VECTOR_STORE_TYPE")
+    vector_store_type: str = Field(
+        default="chroma", validation_alias="VECTOR_STORE_TYPE"
+    )
     chroma_host: str = Field(default="localhost", validation_alias="CHROMA_HOST")
     chroma_port: int = Field(default=8001, validation_alias="CHROMA_PORT")
     chroma_collection_name: str = Field(
@@ -35,7 +41,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=200, validation_alias="CHUNK_OVERLAP")
 
     similarity_top_k: int = Field(default=5, validation_alias="SIMILARITY_TOP_K")
-    similarity_threshold: float = Field(default=0.7, validation_alias="SIMILARITY_THRESHOLD")
+    similarity_threshold: float = Field(
+        default=0.3, validation_alias="SIMILARITY_THRESHOLD"
+    )
 
     data_dir: Path = Field(default=Path("./data"), validation_alias="DATA_DIR")
 

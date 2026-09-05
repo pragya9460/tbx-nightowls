@@ -12,10 +12,76 @@ from src.config import settings, get_settings
 from src.ingestion import ingest_documents, ingest_texts, load_documents
 from src.retriever import RAGRetriever, get_retriever
 from src.database import get_vector_store
+from src.analytics import get_analytics
 from scalar_fastapi import get_scalar_api_reference
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# Single-word tokens that signal an aggregation/analytics question.
+_ANALYTICS_WORD_KEYWORDS = {
+    "total",
+    "sum",
+    "average",
+    "avg",
+    "maximum",
+    "max",
+    "minimum",
+    "min",
+    "count",
+    "aggregate",
+    "group",
+    "breakdown",
+    "distribution",
+    "highest",
+    "lowest",
+    "most",
+    "least",
+    "top",
+    "bottom",
+    "rank",
+    "percentage",
+    "ratio",
+    "trend",
+    "monthly",
+    "daily",
+    "weekly",
+    "annual",
+    "compare",
+    "spend",
+    "spending",
+    "balance",
+    "credit",
+    "debit",
+    "transaction",
+    "transactions",
+}
+
+# Multi-word phrases that also signal analytics intent.
+_ANALYTICS_PHRASE_KEYWORDS = {
+    "how many",
+    "how much",
+    "per account",
+    "by account",
+    "by account_id",
+    "per transaction",
+    "by date",
+    "over time",
+}
+
+
+def _detect_query_type(question: str) -> str:
+    """Return 'analytics' if the question looks aggregation-oriented, else 'semantic'."""
+    q_lower = question.lower().replace("-", " ").replace("_", " ")
+    # Check single-word tokens
+    tokens = set(q_lower.split())
+    if tokens & _ANALYTICS_WORD_KEYWORDS:
+        return "analytics"
+    # Check multi-word phrases
+    if any(phrase in q_lower for phrase in _ANALYTICS_PHRASE_KEYWORDS):
+        return "analytics"
+    return "semantic"
 
 
 @asynccontextmanager
@@ -23,6 +89,10 @@ async def lifespan(app: FastAPI):
     """Application lifespan events."""
     logger.info("Starting RAG API...")
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    # Pre-load analytics engine so the first query isn't slow.
+    logger.info("Pre-loading analytics engine...")
+    get_analytics()
+    logger.info("Analytics engine ready.")
     yield
     logger.info("Shutting down RAG API...")
 
@@ -52,11 +122,21 @@ class QueryRequest(BaseModel):
     filter: Optional[Dict[str, Any]] = Field(
         default=None, description="Metadata filter"
     )
+    query_type: Optional[str] = Field(
+        default="auto",
+        description="'auto' (detect automatically), 'semantic' (RAG similarity search), or 'analytics' (SQL aggregation)",
+    )
 
 
 class QueryResponse(BaseModel):
     answer: str
+    query_type: str = "semantic"
+    # Semantic-search fields
     sources: List[Dict[str, Any]] = []
+    # Analytics fields
+    sql: Optional[str] = None
+    row_count: Optional[int] = None
+    data: Optional[List[Dict[str, Any]]] = None
 
 
 class IngestResponse(BaseModel):
@@ -80,18 +160,46 @@ async def query_rag(
     request: QueryRequest,
     retriever: RAGRetriever = Depends(get_retriever),
 ):
-    """Query the RAG system."""
+    """
+    Unified query endpoint.
+
+    - **auto** (default): detects whether the question needs SQL aggregation
+      or semantic RAG search and routes accordingly.
+    - **analytics**: always uses Text-to-SQL against the CSV data.
+    - **semantic**: always uses vector similarity search + LLM.
+    """
     try:
+        qtype = request.query_type or "auto"
+        if qtype == "auto":
+            qtype = _detect_query_type(request.question)
+
+        logger.info(f"Routing question as '{qtype}': {request.question}")
+
+        # ── Analytics path (Text-to-SQL) ───────────────────────────────────
+        if qtype == "analytics":
+            analytics = get_analytics()
+            result = analytics.answer_question(request.question)
+            return QueryResponse(
+                answer=result["answer"],
+                query_type="analytics",
+                sql=result["sql"],
+                row_count=result["row_count"],
+                data=result["data"],
+            )
+
+        # ── Semantic path (RAG) ────────────────────────────────────────────
         result = retriever.query_with_sources(
             question=request.question,
             filter_dict=request.filter,
         )
         return QueryResponse(
             answer=result["answer"],
+            query_type="semantic",
             sources=result["sources"],
         )
+
     except Exception as e:
-        logger.error(f"Query failed: {e}")
+        logger.error(f"Query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -146,9 +254,16 @@ async def upload_and_ingest(
     collection_name: Optional[str] = Form(default=None),
 ):
     """Upload and ingest files."""
+    ALLOWED_EXTENSIONS = {".pdf", ".txt", ".md", ".docx", ".doc", ".csv"}
     try:
         uploaded_count = 0
         for file in files:
+            suffix = Path(file.filename).suffix.lower()
+            if suffix not in ALLOWED_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(ALLOWED_EXTENSIONS)}",
+                )
             file_path = settings.data_dir / file.filename
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)

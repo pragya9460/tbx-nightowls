@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from chromadb.utils import embedding_functions
@@ -16,11 +18,12 @@ class VectorStore:
         self._embedding_function = None
 
     def _get_embedding_function(self):
-        """Get OpenAI embedding function."""
+        """Get ChromaDB-compatible embedding function using sentence-transformers."""
         if self._embedding_function is None:
-            self._embedding_function = embedding_functions.OpenAIEmbeddingFunction(
-                api_key=settings.openai_api_key,
-                model_name=settings.openai_embedding_model,
+            self._embedding_function = (
+                embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
             )
         return self._embedding_function
 
@@ -39,7 +42,9 @@ class VectorStore:
 
     def get_collection(self, name: str | None = None):
         """Get or create collection."""
-        if self._collection is None or (name and name != settings.chroma_collection_name):
+        if self._collection is None or (
+            name and name != settings.chroma_collection_name
+        ):
             client = self.get_client()
             collection_name = name or settings.chroma_collection_name
             self._collection = client.get_or_create_collection(

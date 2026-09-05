@@ -1,5 +1,5 @@
-import os
 import uuid
+import csv
 from pathlib import Path
 from typing import List, Optional
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -24,6 +24,32 @@ LOADER_MAP = {
     ".doc": UnstructuredWordDocumentLoader,
 }
 
+CSV_EXTENSION = ".csv"
+
+
+def load_csv(file_path: Path) -> List[Document]:
+    """Load a CSV file where each row becomes its own Document.
+
+    All column values are joined into the page_content so the LLM can read
+    them naturally. Every column is also stored individually in metadata so
+    callers can filter on specific fields.
+    """
+    documents = []
+    with open(file_path, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        for i, row in enumerate(reader):
+            # Build human-readable content from all columns
+            content = "\n".join(f"{k}: {v}" for k, v in row.items() if v is not None)
+            metadata = {
+                "source": str(file_path.name),
+                "file_name": file_path.name,
+                "row": i,
+                **{k: str(v) for k, v in row.items()},
+            }
+            documents.append(Document(page_content=content, metadata=metadata))
+    logger.info(f"Loaded {len(documents)} rows from CSV {file_path}")
+    return documents
+
 
 def get_loader(file_path: Path) -> Optional[object]:
     """Get appropriate document loader for file extension."""
@@ -45,8 +71,15 @@ def load_documents(data_dir: Optional[Path] = None) -> List[Document]:
         return documents
 
     for file_path in data_dir.rglob("*"):
-        if file_path.is_file() and file_path.suffix.lower() in LOADER_MAP:
-            try:
+        if not file_path.is_file():
+            continue
+        suffix = file_path.suffix.lower()
+        try:
+            if suffix == CSV_EXTENSION:
+                # Each CSV row becomes its own Document — no further chunking needed
+                docs = load_csv(file_path)
+                documents.extend(docs)
+            elif suffix in LOADER_MAP:
                 loader = get_loader(file_path)
                 if loader:
                     docs = loader.load()
@@ -55,8 +88,8 @@ def load_documents(data_dir: Optional[Path] = None) -> List[Document]:
                         doc.metadata["file_name"] = file_path.name
                     documents.extend(docs)
                     logger.info(f"Loaded {len(docs)} documents from {file_path}")
-            except Exception as e:
-                logger.error(f"Failed to load {file_path}: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load {file_path}: {e}")
 
     return documents
 
@@ -74,7 +107,9 @@ def chunk_documents(documents: List[Document]) -> List[Document]:
     return chunks
 
 
-def ingest_documents(data_dir: Optional[Path] = None, collection_name: Optional[str] = None) -> int:
+def ingest_documents(
+    data_dir: Optional[Path] = None, collection_name: Optional[str] = None
+) -> int:
     """Full ingestion pipeline: load, chunk, and embed documents."""
     vector_store = get_vector_store()
     collection = vector_store.get_collection(collection_name)
@@ -84,7 +119,15 @@ def ingest_documents(data_dir: Optional[Path] = None, collection_name: Optional[
         logger.warning("No documents to ingest")
         return 0
 
-    chunks = chunk_documents(documents)
+    # CSV rows are already one document per row — skip the chunker for those.
+    # Non-CSV documents go through normal chunking.
+    csv_docs = [
+        d for d in documents if d.metadata.get("file_name", "").endswith(".csv")
+    ]
+    other_docs = [
+        d for d in documents if not d.metadata.get("file_name", "").endswith(".csv")
+    ]
+    chunks = csv_docs + (chunk_documents(other_docs) if other_docs else [])
 
     texts = [chunk.page_content for chunk in chunks]
     metadatas = [chunk.metadata for chunk in chunks]
@@ -99,7 +142,9 @@ def ingest_documents(data_dir: Optional[Path] = None, collection_name: Optional[
     return len(chunks)
 
 
-def ingest_texts(texts: List[str], metadatas: List[dict], collection_name: Optional[str] = None) -> int:
+def ingest_texts(
+    texts: List[str], metadatas: List[dict], collection_name: Optional[str] = None
+) -> int:
     """Ingest raw texts with metadata."""
     vector_store = get_vector_store()
     collection = vector_store.get_collection(collection_name)

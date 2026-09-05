@@ -6,8 +6,10 @@ python-dotenv==1.0.0
 
 langchain==0.1.11
 langchain-openai==0.0.5
+langchain-anthropic==0.1.4
+langchain-huggingface==0.0.3
 langchain-community
-langchain-core==0.1.32
+langchain-core==0.1.52
 
 chromadb==0.4.22
 
@@ -25,3 +27,5 @@ pytest==7.4.4
 pytest-asyncio==0.23.3
 httpx==0.26.0
 scalar_fastapi
+sentence-transformers
+pandas
