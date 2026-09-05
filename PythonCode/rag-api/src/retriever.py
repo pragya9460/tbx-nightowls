@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict, Any
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langchain.schema import Document
 from langchain.prompts import ChatPromptTemplate
 from langchain.chains import RetrievalQA
@@ -16,10 +16,12 @@ Use only the information from the context to answer the question.
 If the context doesn't contain enough information, say so honestly.
 Cite sources when possible by referencing the document metadata."""
 
-QA_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", SYSTEM_PROMPT),
-    ("human", "Context:\n{context}\n\nQuestion: {input}"),
-])
+QA_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        ("system", SYSTEM_PROMPT),
+        ("human", "Context:\n{context}\n\nQuestion: {input}"),
+    ]
+)
 
 
 class RAGRetriever:
@@ -28,9 +30,9 @@ class RAGRetriever:
     def __init__(self, collection_name: Optional[str] = None):
         self.vector_store = get_vector_store()
         self.collection = self.vector_store.get_collection(collection_name)
-        self.llm = ChatOpenAI(
-            api_key=settings.openai_api_key,
-            model=settings.openai_model,
+        self.llm = ChatAnthropic(
+            api_key=settings.anthropic_api_key,
+            model=settings.anthropic_model,
             temperature=0,
         )
         self._retrieval_chain = None
@@ -60,10 +62,12 @@ class RAGRetriever:
                 similarity = 1 - distance
 
                 if similarity >= threshold:
-                    documents.append(Document(
-                        page_content=doc_text,
-                        metadata={**metadata, "similarity": similarity}
-                    ))
+                    documents.append(
+                        Document(
+                            page_content=doc_text,
+                            metadata={**metadata, "similarity": similarity},
+                        )
+                    )
 
         logger.info(f"Found {len(documents)} relevant documents for query")
         return documents
@@ -75,10 +79,14 @@ class RAGRetriever:
                 search_kwargs={"k": settings.similarity_top_k}
             )
             combine_docs_chain = create_stuff_documents_chain(self.llm, QA_PROMPT)
-            self._retrieval_chain = create_retrieval_chain(retriever, combine_docs_chain)
+            self._retrieval_chain = create_retrieval_chain(
+                retriever, combine_docs_chain
+            )
         return self._retrieval_chain
 
-    def query(self, question: str, filter_dict: Optional[Dict] = None) -> Dict[str, Any]:
+    def query(
+        self, question: str, filter_dict: Optional[Dict] = None
+    ) -> Dict[str, Any]:
         """Query the RAG system."""
         chain = self.get_retrieval_chain()
         result = chain.invoke({"input": question})
@@ -87,7 +95,9 @@ class RAGRetriever:
             "context": result.get("context", []),
         }
 
-    def query_with_sources(self, question: str, filter_dict: Optional[Dict] = None) -> Dict[str, Any]:
+    def query_with_sources(
+        self, question: str, filter_dict: Optional[Dict] = None
+    ) -> Dict[str, Any]:
         """Query with source documents returned."""
         docs = self.similarity_search(question)
         if not docs:
@@ -96,18 +106,29 @@ class RAGRetriever:
                 "sources": [],
             }
 
-        context = "\n\n".join([f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}" for d in docs])
+        context = "\n\n".join(
+            [
+                f"Source: {d.metadata.get('source', 'unknown')}\n{d.page_content}"
+                for d in docs
+            ]
+        )
 
         prompt = QA_PROMPT.format(context=context, input=question)
         response = self.llm.invoke(prompt)
 
         sources = []
         for doc in docs:
-            sources.append({
-                "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
-                "metadata": doc.metadata,
-                "similarity": doc.metadata.get("similarity", 0),
-            })
+            sources.append(
+                {
+                    "content": (
+                        doc.page_content[:200] + "..."
+                        if len(doc.page_content) > 200
+                        else doc.page_content
+                    ),
+                    "metadata": doc.metadata,
+                    "similarity": doc.metadata.get("similarity", 0),
+                }
+            )
 
         return {
             "answer": response.content,
