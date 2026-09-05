@@ -1,5 +1,11 @@
 .PHONY: help install seed test eval api frontend docker-up docker-dev docker-prod docker-down mysql-up clean
 
+# Docker buildx reads OTEL_* env vars from the shell and only supports
+# grpc/http-protobuf. The Polaris telemetry vars (http/json) make every
+# `docker compose --build` fail with "unsupported otlp protocol http/json".
+unexport OTEL_EXPORTER_OTLP_PROTOCOL OTEL_EXPORTER_OTLP_ENDPOINT
+unexport OTEL_TRACES_EXPORTER OTEL_METRICS_EXPORTER OTEL_LOGS_EXPORTER
+
 help:
 	@echo "Artha — AI Finance Assistant (MySQL)"
 	@echo ""
