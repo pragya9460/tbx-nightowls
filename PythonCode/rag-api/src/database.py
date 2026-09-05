@@ -18,24 +18,12 @@ class VectorStore:
         self._embedding_function = None
 
     def _get_embedding_function(self):
-        # """Get OpenAI embedding function."""
-        # if self._embedding_function is None:
-        #     self._embedding_function = embedding_functions.OpenAIEmbeddingFunction(
-        #         api_key=settings.openai_api_key,
-        #         model_name=settings.openai_embedding_model,
-        #     )
-        # return self._embedding_function
-
-        """Get OpenAI embedding function."""
-
-        from langchain_huggingface import HuggingFaceEmbeddings
-        from dotenv import load_dotenv
-
-        load_dotenv()
-
+        """Get ChromaDB-compatible embedding function using sentence-transformers."""
         if self._embedding_function is None:
-            self._embedding_function = HuggingFaceEmbeddings(
-                model_name="all-MiniLM-L6-v2"
+            self._embedding_function = (
+                embedding_functions.SentenceTransformerEmbeddingFunction(
+                    model_name="all-MiniLM-L6-v2"
+                )
             )
         return self._embedding_function
 
