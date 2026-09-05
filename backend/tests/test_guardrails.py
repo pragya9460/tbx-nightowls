@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.llm.provider import RuleBasedProvider
-from app.query_engine.engine import FinancialQueryEngine, mask_account_number, mask_utr
+from app.query_engine.engine import mask_account_number, mask_utr
 from app.schemas.query import (
     Aggregation,
     FinancialQuery,
@@ -44,6 +44,25 @@ def test_unsupported_domains_refused(question, fragment):
 def test_unsupported_refusal_does_not_execute_anything():
     resp = u("What is my profit margin?")
     assert resp.query is None
+
+
+@pytest.mark.parametrize("question", [
+    "what is your name",
+    "What's your name?",
+    "Who are you?",
+    "What are you?",
+    "hello",
+    "What is the weather today?",
+])
+def test_identity_and_chitchat_refused_not_guessed(question):
+    """Off-topic questions must refuse — never a transaction total."""
+    resp = u(question)
+    assert resp.query is None, f"guessed a query for {question!r}"
+    assert resp.refusal_reason == "unsupported"
+    assert "₹" not in (resp.refusal_message or "")
+    assert "Artha" in (resp.refusal_message or "") or "dataset" in (
+        resp.refusal_message or ""
+    ).lower()
 
 
 def test_supported_refusal_includes_capabilities():
@@ -149,10 +168,8 @@ def test_injection_payload_as_description_fails_validation(db):
             "filters": {"description_contains": payload},
             "date_range": {"type": "all_time"},
         })
-    # table still exists and is queryable ('transaction' is a reserved word
-    # in SQLite — quote it; SQLAlchemy auto-quotes in ORM-generated SQL)
-    from sqlalchemy import text
-    assert db.execute(text('SELECT COUNT(*) FROM "transaction"')).scalar() > 0
+    # table still exists and is queryable
+    assert db.count_total("transaction") > 0
 
 
 # ---------------------------------------------------------------------------
@@ -174,26 +191,22 @@ def test_mask_utr():
 
 
 def test_engine_results_never_contain_raw_account_number(db):
-    engine = FinancialQueryEngine(db)
-    from app.schemas.query import DateRangeType
-
     q = FinancialQuery.model_validate({
         "intent": "transaction_list", "metric": "transaction_amount",
         "aggregation": "none", "date_range": {"type": "all_time"}, "limit": 20,
     })
-    result = engine.execute(q)
+    result = db.execute(q)
     for r in result.records:
         raw = r.get("account_number", "")
         assert not (raw.isdigit() and len(raw) > 6), f"raw account leaked: {raw}"
 
 
 def test_engine_results_mask_utr(db):
-    engine = FinancialQueryEngine(db)
     q = FinancialQuery.model_validate({
         "intent": "transaction_list", "metric": "transaction_amount",
         "aggregation": "none", "date_range": {"type": "all_time"}, "limit": 20,
     })
-    result = engine.execute(q)
+    result = db.execute(q)
     for r in result.records:
         utr = r.get("utr_number")
         if utr:

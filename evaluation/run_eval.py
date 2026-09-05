@@ -5,10 +5,11 @@ Usage:
     python evaluation/run_eval.py --provider rule_based
     python evaluation/run_eval.py --provider anthropic --model claude-haiku-4-5
 
-Needs the app's ARTHA_DATABASE_URL env (or defaults to localhost) with seed
-data loaded. The benchmark JSON (benchmark.json) drives intent/filter/date/
-refusal checks; accuracy is COMPUTED from actual execution — never faked.
-Scores are written to evaluation/results.json.
+Needs ``ARTHA_DUCKDB_PATH`` (or default ``data/finance.duckdb``) with seed data
+loaded via ``python scripts/load_data.py --generate``. The benchmark JSON
+(benchmark.json) drives intent/filter/date/refusal checks; accuracy is
+COMPUTED from actual execution — never faked. Scores are written to
+evaluation/results.json.
 
 Model efficiency (20% of judging): this harness measures latency per
 provider/model so the smallest capable model can be justified with data.
@@ -26,7 +27,6 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(BACKEND))
 
-from app.db import SessionLocal  # noqa: E402
 from app.llm.provider import build_provider  # noqa: E402
 from app.schemas.query import FinancialQuery  # noqa: E402
 
@@ -79,13 +79,6 @@ def main() -> int:
 
     cases = json.loads(BENCHMARK_PATH.read_text())
     os.environ.setdefault("ARTHA_LLM_PROVIDER", args.provider)
-    # Query understanding doesn't need a database; the DB connection is
-    # optional (used only if a future evaluator scores grounded results too).
-    db = None
-    try:
-        db = SessionLocal()
-    except Exception:
-        pass
 
     provider = build_provider(
         args.provider,
@@ -155,8 +148,6 @@ def main() -> int:
         if not r["passed"]:
             print(f"  FAIL: {r['question']!r} → {', '.join(r['failures'])}")
     print(f"Results written to {out_path}")
-    if db is not None:
-        db.close()
     return 0
 
 

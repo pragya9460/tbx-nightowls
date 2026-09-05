@@ -1,21 +1,18 @@
-"""Chat orchestration: question → understanding → validation → engine → answer.
+"""Chat orchestration: question → understanding → validation → DuckDB → answer.
 
-This is the pipeline from spec §4. Every stage is deterministic except the
-query-understanding step, and even that output must pass Pydantic validation
-before execution.
+Every stage is deterministic except query-understanding, and even that output
+must pass Pydantic validation before the Text-to-SQL compiler runs.
 """
 from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy.orm import Session
-
+from .. import config
 from ..conversation.memory import ConversationStore
 from ..llm.provider import QueryUnderstanding, build_provider
-from ..query_engine.engine import FinancialQueryEngine
+from ..query_engine.duckdb_engine import DuckDBQueryEngine
 from ..query_engine.evidence import build_evidence
 from ..schemas.query import (
-    ComparisonSpec,
     DateRangeType,
     FinancialQuery,
     QueryRefusalReason,
@@ -24,21 +21,18 @@ from ..schemas.query import (
     refusal,
     today as app_today,
 )
-from ..config import LLM_MODEL, LLM_MAX_RETRIES, LLM_TIMEOUT_SECONDS
 from .answers import generate_answer
 
 
 class ChatService:
-    def __init__(self, db: Session):
-        self.db = db
-        self.engine = FinancialQueryEngine(db)
+    def __init__(self, engine: DuckDBQueryEngine | None = None):
+        self.engine = engine or DuckDBQueryEngine.from_path(
+            config.DUCKDB_PATH or None
+        )
 
     def _provider(self):
-        from .. import config
-
-        provider_name = config.effective_provider()
         return build_provider(
-            provider_name,
+            config.effective_provider(),
             api_key=config.ANTHROPIC_API_KEY,
             model=config.LLM_MODEL,
             max_retries=config.LLM_MAX_RETRIES,
@@ -49,19 +43,16 @@ class ChatService:
                store: ConversationStore) -> dict:
         ctx = store.get(conversation_id)
 
-        # 1. Understand (LLM or rule-based)
         provider = self._provider()
         understanding: QueryUnderstanding = provider.understand(
             question, context=ctx.to_prompt_context()
         )
 
-        # 2. Refusals from understanding stage
         if understanding.refusal_reason:
             return self._refusal_response(
                 understanding, provider, conversation_id, store,
             )
 
-        # 3. Validate strictly (never execute unvalidated model output)
         raw = understanding.query or {}
         try:
             dr = raw.get("date_range")
@@ -85,7 +76,6 @@ class ChatService:
                 extra={"validation_error": str(e)},
             )
 
-        # 4. Comparison: compute both periods
         comparison_result = None
         if fq.intent.value == "comparison":
             base = fq.date_range
@@ -103,7 +93,6 @@ class ChatService:
         else:
             result = self.engine.execute(fq)
 
-        # 5. Answer + evidence from computed results
         answer = generate_answer(fq, result, comparison_result)
         evidence = build_evidence(fq, result)
         if comparison_result is not None:
@@ -118,7 +107,6 @@ class ChatService:
             ) or comparison_evidence["how_calculated"]["date_range"]
             evidence["comparison"] = comparison_evidence
 
-        # 6. Update structured conversation memory
         if conversation_id:
             ctx.apply(fq, {"value": result.summary.get("value"),
                            "answer": answer[:120]})
@@ -134,6 +122,7 @@ class ChatService:
                 "model": understanding.model_used,
                 "understanding_latency_ms": understanding.latency_ms,
                 "grounded": True,
+                "backend": "duckdb",
             },
         }
 
@@ -146,7 +135,7 @@ class ChatService:
             else QueryRefusalReason.UNSUPPORTED_METRIC,
             message=message or understanding.refusal_message or "I can't answer that.",
             suggestions=understanding.suggestions or [],
-            include_supported=(reason is None),  # show capabilities for unsupported
+            include_supported=(reason is None),
         )
         resp = {
             "conversation_id": conversation_id or "anonymous",
@@ -159,6 +148,7 @@ class ChatService:
                 "model": understanding.model_used,
                 "understanding_latency_ms": understanding.latency_ms,
                 "grounded": False,
+                "backend": "duckdb",
             },
         }
         if extra:

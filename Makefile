@@ -1,11 +1,11 @@
 .PHONY: help install seed test eval api frontend docker-up docker-dev docker-prod docker-down clean
 
 help:
-	@echo "Artha — AI Finance Assistant"
+	@echo "Artha — AI Finance Assistant (DuckDB)"
 	@echo ""
 	@echo "  make install     Install backend + frontend dependencies"
-	@echo "  make seed        Generate and load synthetic seed data into MySQL"
-	@echo "  make test        Run the backend test suite (SQLite, no services needed)"
+	@echo "  make seed        Generate CSVs and build data/finance.duckdb"
+	@echo "  make test        Run the backend test suite (DuckDB, no services needed)"
 	@echo "  make eval        Run the evaluation harness against the LLM/rule provider"
 	@echo "  make api         Run the backend locally on :8000"
 	@echo "  make frontend    Run the Vite dev server on :5173"
@@ -20,7 +20,7 @@ install:
 	cd frontend && npm install
 
 seed:
-	cd backend && python scripts/load_data.py --generate --drop
+	cd backend && python scripts/load_data.py --generate --data-dir ../data
 
 test:
 	cd backend && python -m pytest -q
@@ -50,4 +50,5 @@ docker-down:
 
 clean:
 	rm -rf frontend/dist frontend/node_modules/.vite backend/.pytest_cache backend/**/__pycache__
+	rm -f data/finance.duckdb data/*.duckdb.wal
 	find . -name "__pycache__" -type d -prune -exec rm -rf {} +
