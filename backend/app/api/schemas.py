@@ -46,10 +46,12 @@ class ChatResponse(BaseModel):
     status: Literal["supported", "empty_data", "ambiguous", "unsupported",
                     "invalid"] = "supported"
     # Interpretable confidence signal — NOT a statistical probability.
-    # high   = exact supported query, computed deterministically
-    # medium = valid query, but zero records matched (a real zero)
-    # none   = nothing executed (refusal path)
-    confidence: Literal["high", "medium", "none"] = "high"
+    # Deterministic categories (docs/must-have-compliance.md):
+    #   high        — supported intent, valid query, executed, evidence present
+    #   limited     — valid query, thin data (few matched records)
+    #   no_matches  — valid query, zero records matched (a real zero)
+    #   none        — nothing executed (ambiguous / unsupported / invalid)
+    confidence: Literal["high", "limited", "no_matches", "none"] = "high"
     confidence_basis: str | None = None
     meta: dict[str, Any] = Field(default_factory=dict)
 

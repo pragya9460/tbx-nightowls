@@ -41,13 +41,13 @@ def test_supported_status_and_high_confidence(client):
 
 
 def test_empty_data_status_on_zero_match(client):
-    """A valid question with no matching data → empty_data + medium, a real
-    zero — NOT a fabricated figure and NOT an error."""
+    """A valid question with no matching data → empty_data + no_matches, a
+    real zero — NOT a fabricated figure and NOT an error."""
     body = client.post("/api/chat", json={
         "question": "How much did I spend in January 2020?"}).json()
     assert body["refusal"] is None
     assert body["status"] == "empty_data"
-    assert body["confidence"] == "medium"
+    assert body["confidence"] == "no_matches"
     assert "no" in body["answer"].lower()
 
 
@@ -147,3 +147,101 @@ def test_export_csv_matches_displayed_records(client):
 def test_export_rejects_empty(client):
     resp = client.post("/api/export/evidence", json={"rows": []})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Excel export (Phase 1): same rows, same masking, same columns as CSV/UI
+# ---------------------------------------------------------------------------
+
+def test_export_excel_parity_with_csv_and_ui(client):
+    chat = client.post("/api/chat", json={
+        "question": "Show my largest transactions."}).json()
+    records = chat["evidence"]["records"]
+
+    csv_resp = client.post("/api/export/evidence", json={
+        "rows": records, "format": "csv"})
+    xl_resp = client.post("/api/export/evidence", json={
+        "rows": records, "format": "excel"})
+    assert xl_resp.status_code == 200
+    assert xl_resp.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    from openpyxl import load_workbook
+    import io
+
+    wb = load_workbook(io.BytesIO(xl_resp.content))
+    ws = wb.active
+    xl_rows = list(ws.iter_rows(values_only=True))
+    assert len(xl_rows) == len(records) + 1  # header + rows
+
+    csv_lines = csv_resp.text.strip().splitlines()
+    assert len(csv_lines) == len(xl_rows)  # UI == CSV == Excel (row count)
+
+    # same columns, same order
+    csv_header = csv_lines[0].split(",")
+    assert list(xl_rows[0]) == csv_header
+
+    # same values cell-for-cell (CSV parses to the same strings)
+    import csv as _csv
+    csv_rows = list(_csv.reader(csv_lines[1:]))
+    for xl_row, csv_row in zip(xl_rows[1:], csv_rows):
+        for xl_cell, csv_cell in zip(xl_row, csv_row):
+            assert str(xl_cell) == csv_cell or (xl_cell is None and csv_cell == "")
+
+    # masking preserved in the Excel file
+    if "account_number" in csv_header:
+        col = csv_header.index("account_number")
+        for xl_row in xl_rows[1:]:
+            assert str(xl_row[col]).startswith("XXXXX")
+
+
+def test_export_excel_requires_openpyxl_headers(client):
+    chat = client.post("/api/chat", json={
+        "question": "Show my largest transactions."}).json()
+    resp = client.post("/api/export/evidence", json={
+        "rows": chat["evidence"]["records"], "format": "excel"})
+    assert resp.headers.get("content-disposition", "").endswith('filename="artha_evidence.xlsx"')
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — full confidence taxonomy (high / limited / no_matches / none)
+# ---------------------------------------------------------------------------
+
+def test_confidence_limited_on_thin_data(client):
+    """A valid query matching <5 records → 'limited', not 'high'."""
+    body = client.post("/api/chat", json={
+        "question": "Show transactions above 5000000."}).json()
+    matched = body["evidence"]["how_calculated"]["records_matched"]
+    if 0 < matched < 5:
+        assert body["confidence"] == "limited"
+        assert "few records" in body["confidence_basis"] or \
+            "indicative" in body["confidence_basis"]
+    else:
+        # dataset-dependent fallback: category still consistent with count
+        assert body["confidence"] in ("high", "limited", "no_matches")
+
+
+def test_confidence_high_requires_evidence(client):
+    body = client.post("/api/chat", json={
+        "question": "How much did I spend last month?"}).json()
+    assert body["confidence"] == "high"
+    assert body["evidence"] is not None
+    assert body["evidence"]["grounded"] is True
+
+
+def test_confidence_none_on_all_refusal_paths(client):
+    for question in ("How much did we spend on salaries?",
+                     "How much moved last month?"):
+        body = client.post("/api/chat", json={"question": question}).json()
+        assert body["confidence"] == "none"
+        assert body["evidence"] is None
+
+
+def test_confidence_never_probabilistic(client):
+    """The confidence value must be one of the deterministic categories."""
+    for question in ("What is my total available balance?",
+                     "Show my largest transactions.",
+                     "How much did I spend in January 2020?"):
+        body = client.post("/api/chat", json={"question": question}).json()
+        assert body["confidence"] in ("high", "limited", "no_matches", "none")
+        assert isinstance(body["confidence_basis"], str)

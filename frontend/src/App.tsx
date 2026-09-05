@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, ChatResponse } from "./types";
 import { EvidencePanel } from "./components/EvidenceTable";
+import { TwinPanel } from "./components/TwinPanel";
 
 const SUGGESTED_QUESTIONS = [
   "What is my total available balance?",
   "How much did I spend last month?",
-  "Which bank holds the most money?",
-  "Show my largest transactions.",
+  "Can I pay Sharma Suppliers 400000 today?",
+  "How much cash do I really have?",
 ];
 
 export default function App() {
@@ -44,6 +45,8 @@ export default function App() {
           refusal: resp.refusal,
           meta: resp.meta,
           suggestions: resp.refusal?.suggestions,
+          confidence: resp.confidence,
+          confidence_basis: resp.confidence_basis,
         };
         return copy;
       });
@@ -92,7 +95,9 @@ export default function App() {
   const showSuggestions = messages.length === 0;
 
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col px-4">
+    <div className="mx-auto flex h-full max-w-6xl gap-6 px-4">
+      {/* Chat column (primary) */}
+      <div className="flex h-full max-w-3xl flex-1 flex-col">
       {/* Header */}
       <header className="flex items-center justify-between border-b border-[var(--artha-border)] py-4">
         <div>
@@ -162,6 +167,28 @@ export default function App() {
                     }`}
                   >
                     <div className="whitespace-pre-wrap">{msg.text}</div>
+                    {msg.confidence && (
+                      <div
+                        className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+                          msg.confidence === "high"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : msg.confidence === "limited"
+                              ? "bg-amber-50 text-amber-700"
+                              : msg.confidence === "no_matches"
+                                ? "bg-slate-100 text-slate-600"
+                                : "bg-orange-50 text-orange-700"
+                        }`}
+                        title={msg.confidence_basis ?? undefined}
+                      >
+                        {msg.confidence === "high" && "✓ High confidence"}
+                        {msg.confidence === "limited" && "⚠ Limited data"}
+                        {msg.confidence === "no_matches" && "○ No matching records"}
+                        {msg.confidence === "none" && "⚠ Not executed"}
+                        {msg.confidence === "high" &&
+                          msg.evidence?.how_calculated?.records_matched != null &&
+                          ` — grounded in ${msg.evidence.how_calculated.records_matched.toLocaleString("en-IN")} records`}
+                      </div>
+                    )}
                     {msg.suggestions && msg.suggestions.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {msg.suggestions.map((s) => (
@@ -223,6 +250,12 @@ export default function App() {
           </button>
         </form>
       </footer>
+      </div>
+
+      {/* Financial Twin sidebar (context, chat remains primary) */}
+      <div className="hidden w-80 shrink-0 overflow-y-auto py-4 lg:block">
+        <TwinPanel />
+      </div>
     </div>
   );
 }

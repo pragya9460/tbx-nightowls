@@ -12,6 +12,8 @@ from ..conversation.memory import ConversationStore
 from ..query_engine.duckdb_engine import DuckDBQueryEngine
 from ..schemas.query import FinancialQuery, QueryRefusalReason, previous_period, refusal
 from ..services.chat_service import ChatService
+from ..services.confidence import confidence_for_result
+from ..services.financial_twin import FinancialTwinEngine
 from .schemas import ChatRequest, ChatResponse, EvidenceExportRequest, HealthResponse, QueryRequest
 
 router = APIRouter(prefix="/api")
@@ -107,6 +109,7 @@ def run_query(req: QueryRequest) -> ChatResponse:
             and not result.breakdown
         )
         status = "empty_data" if empty else "supported"
+        confidence, confidence_basis = confidence_for_result(result)
 
         return ChatResponse(
             conversation_id="direct",
@@ -115,12 +118,8 @@ def run_query(req: QueryRequest) -> ChatResponse:
             query=fq.model_dump(mode="json", exclude_none=True),
             refusal=None,
             status=status,
-            confidence="high" if status == "supported" else "medium",
-            confidence_basis=(
-                "exact supported query, computed deterministically from the database"
-                if status == "supported"
-                else "valid query executed, but no records matched the filters"
-            ),
+            confidence=confidence,
+            confidence_basis=confidence_basis,
             meta={"grounded": True, "provider": "none", "backend": "duckdb"},
         )
     finally:
@@ -180,3 +179,153 @@ def export_evidence(req: EvidenceExportRequest) -> StreamingResponse:
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="artha_evidence.csv"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Financial Twin endpoints (Phases 5–8). All deterministic; the LLM is not
+# involved in any of these computations.
+# ---------------------------------------------------------------------------
+
+def _twin() -> "FinancialTwinEngine":
+    eng = _engine()
+    return FinancialTwinEngine(eng)
+
+
+@router.get("/twin/accounts")
+def twin_accounts() -> dict:
+    twin = _twin()
+    try:
+        return twin.accounts_overview()
+    finally:
+        twin.db.close()
+
+
+@router.get("/twin/rules")
+def twin_rules() -> dict:
+    twin = _twin()
+    try:
+        return twin.rules_and_reserves()
+    finally:
+        twin.db.close()
+
+
+@router.get("/twin/vendors")
+def twin_vendors(limit: int = 10) -> dict:
+    twin = _twin()
+    try:
+        return twin.vendor_profiles(limit=min(limit, 100))
+    finally:
+        twin.db.close()
+
+
+@router.get("/twin/reconciliation")
+def twin_reconciliation() -> dict:
+    twin = _twin()
+    try:
+        return twin.reconciliation_status()
+    finally:
+        twin.db.close()
+
+
+@router.get("/twin/cash-position")
+def twin_cash_position() -> dict:
+    twin = _twin()
+    try:
+        return twin.cash_position()
+    finally:
+        twin.db.close()
+
+
+@router.get("/twin/anomalies")
+def twin_anomalies(limit: int = 5) -> dict:
+    """Scan the most recent transactions against per-counterparty history.
+
+    Deterministic rule: amount > multiplier × counterparty average
+    (excluding the transaction itself), with a minimum history size.
+    """
+    twin = _twin()
+    try:
+        from ..services.anomaly import evaluate_transaction
+        from ..services.vendor_intel import extract_counterparty
+
+        con = twin.db._con
+        rows = con.execute(
+            """
+            SELECT description, transaction_amount, transaction_date
+            FROM "transaction"
+            WHERE description IS NOT NULL
+            ORDER BY transaction_date DESC
+            LIMIT 500
+            """
+        ).fetchall()
+        cols = ["description", "transaction_amount", "transaction_date"]
+        txns = [dict(zip(cols, r)) for r in rows]
+
+        # group history by counterparty
+        history: dict[str, list[dict]] = {}
+        for t in txns:
+            cp = extract_counterparty(t["description"])
+            if cp:
+                history.setdefault(cp, []).append(t)
+
+        anomalies = []
+        checked = 0
+        for t in txns:
+            cp = extract_counterparty(t["description"])
+            if not cp:
+                continue
+            # history = same counterparty's other transactions
+            hist = [h for h in history.get(cp, []) if h is not t]
+            v = evaluate_transaction(t, hist)
+            checked += 1
+            if v.is_anomalous:
+                d = v.to_dict()
+                d["transaction_date"] = (
+                    t["transaction_date"].isoformat()
+                    if t["transaction_date"] else None
+                )
+                anomalies.append(d)
+                if len(anomalies) >= limit:
+                    break
+
+        return {
+            "anomalies": anomalies,
+            "transactions_checked": checked,
+            "rule": {
+                "type": "amount_vs_counterparty_average",
+                "multiplier": evaluate_transaction.__defaults__ and None
+                or __import__("app.services.anomaly", fromlist=["DEFAULT_MULTIPLIER"]).DEFAULT_MULTIPLIER,
+                "min_history": __import__("app.services.anomaly", fromlist=["DEFAULT_MIN_HISTORY"]).DEFAULT_MIN_HISTORY,
+            },
+            "provenance": "DERIVED",
+            "note": (
+                "deterministic rule on dataset amounts — the LLM never "
+                "decides what is anomalous"
+            ),
+        }
+    finally:
+        twin.db.close()
+
+
+class AffordabilityRequest(ChatRequest):
+    pass
+
+
+@router.get("/twin/afford")
+def twin_afford(vendor: str, amount: float) -> dict:
+    """Deterministic feasibility analysis — never executes a payment."""
+    twin = _twin()
+    try:
+        return twin.can_i_afford(vendor, amount)
+    finally:
+        twin.db.close()
+
+
+@router.get("/twin/simulate")
+def twin_simulate(vendor: str, amount: float) -> dict:
+    """Deterministic what-if: before → payment → after + rule outcomes."""
+    twin = _twin()
+    try:
+        return twin.simulate_payment(vendor, amount)
+    finally:
+        twin.db.close()

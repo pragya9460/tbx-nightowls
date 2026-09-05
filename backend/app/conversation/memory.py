@@ -33,6 +33,13 @@ class ConversationContext:
         if len(self.history) > 20:
             self.history = self.history[-20:]
 
+    def apply_scenario(self, scenario: str, answer_summary: str) -> None:
+        """Record a Financial Twin scenario turn (not a FinancialQuery)."""
+        self.last_intent = f"scenario:{scenario}"
+        self.history.append({"answer_summary": answer_summary})
+        if len(self.history) > 20:
+            self.history = self.history[-20:]
+
     def to_prompt_context(self) -> dict:
         """Compact context passed to the LLM for follow-up resolution."""
         return {

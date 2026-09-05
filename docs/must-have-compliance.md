@@ -1,6 +1,6 @@
 # Must-Have Compliance — TBX Problem Statement
 
-Status as of the hardening pass. Every ✅ below is backed by named tests
+Status as of the Financial-Twin pass. Every ✅ below is backed by named tests
 (`backend/tests/`) and was verified through the live API. Regenerate test
 results with `cd backend && .venv/bin/python -m pytest -q`.
 
@@ -27,9 +27,38 @@ results with `cd backend && .venv/bin/python -m pytest -q`.
 
 | Bonus | Status | Notes |
 |---|---|---|
-| **Confidence signalling** | ✅ | Interpretable signals, no fake probabilities: `confidence: high` (supported, deterministic), `medium` (valid query, zero records — a real zero), `none` (refusal, nothing executed). Each response includes `confidence_basis` explaining the signal in words. |
-| **Anomaly callout** | ⏸ Deferred | Deliberately deferred to the next iteration: the current dataset lacks the per-vendor history dimension that would make callouts meaningful; `dataset/extended_v1/` (not yet loaded) is the intended data source. Documented in `architecture.md` §13. |
-| **CSV / Excel export** | ✅ | `POST /api/export/evidence` returns CSV (default) or Excel; rows are passed verbatim from the evidence block, so exports contain exactly what was displayed (masked, capped — enforced by test). |
+| **Confidence signalling** | ✅ | Interpretable, categorical — no fake probabilities: `high` (≥5 matched records, deterministic), `limited` (valid query, 1–4 matched records), `no_matches` (valid query, zero records — a real zero), `none` (refusal/invalid, nothing executed). Each response includes `confidence_basis` explaining the signal in words; the UI renders a colour-coded pill with the basis as tooltip. |
+| **Anomaly callout** | ✅ | Deterministic rule in `app/services/anomaly.py`: transaction is anomalous iff `amount > multiplier × counterparty historical_average` (history excludes the transaction under test; ≥5 records required else never flagged). Multiplier/min-history env-configurable (`ARTHA_ANOMALY_MULTIPLIER`, `ARTHA_ANOMALY_MIN_HISTORY`). No ML, no LLM judgement. API `GET /api/twin/anomalies`; chat "Any unusual transactions?"; surfaced in the UI Alerts card. |
+| **CSV / Excel export** | ✅ | `POST /api/export/evidence` returns CSV (default) or Excel (openpyxl); rows are passed verbatim from the evidence block, so exports contain exactly what was displayed (masked, capped — enforced by test, incl. CSV==Excel parity). |
+
+## Financial Intelligence / Financial Twin (this pass)
+
+First version of the twin layer — deterministic engines over the official
+dataset plus clearly-labelled demo rules. Full detail:
+`docs/financial-twin.md`, `architecture.md` §6.
+
+| Capability | Status | Notes |
+|---|---|---|
+| **Financial Twin domain model** | ✅ | `FinancialTwinEngine` — accounts (balances read directly, never reconstructed from transactions), rules/reserves with `created/updated` timestamps and provenance, vendor profiles derived from real rows, reconciliation honest-absence adapter. Provenance levels: `OFFICIAL_DATASET` / `DERIVED` / `USER_PREFERENCE` / `SYNTHETIC_DEMO`, on every value. |
+| **Protected reserves** | ✅ | Payroll ₹6,00,000 + GST ₹1,50,000, `protected: true`, labelled `SYNTHETIC_DEMO`; subtracted exactly once in the cash engine (no double counting — arithmetic identity tested). |
+| **True available-cash engine** | ✅ | available_balance (official) − restricted (no source → 0, noted) − protected reserves (demo) − commitments (no source → 0, noted). Missing data never invented. `GET /api/twin/cash-position`; chat "How much cash do I really have?" / "Why is my cash lower…". |
+| **"Can I pay X ₹Y?"** | ✅ | Deterministic feasibility: cash after, reserve violation, min-buffer violation, approval threshold, derived vendor history. Structured result + reasons + provenance. **Never executes a payment** (tested; no pay endpoint exists). |
+| **What-if simulation** | ✅ | Static before → payment → after with per-rule outcomes (✓ preserved / ⚠ violated / approval-required), labelled assumptions. |
+| **Vendor/counterparty intelligence** | ✅ | Deterministic description-format parsers (UPI/NEFT/IMPS/FT); aggregates computed from actual debit rows; one vendor's total verified against independent SQL in tests. Top vendors in UI + chat. |
+| **Anomaly alerts in UI** | ✅ | Alerts card in the twin sidebar (`TwinPanel`) — amber callouts with ratio vs historical average. |
+| **Reconciliation** | ⏸ Honest absence | Dataset has no reconciliation table; API returns `available: false` + the exact adapter interface a future table satisfies. Nothing fabricated. `dataset/extended_v1/` remains unloaded. |
+| **Financial Twin UI** | ✅ | `TwinPanel` sidebar (cash position with components + provenance badges, top vendors, alerts, rules & reserves) — chat remains primary. |
+
+## Good-to-Have demo questions (new this pass)
+
+| # | Question | Result |
+|---|---|---|
+| 10 | "Can I pay Sharma Suppliers 400000 today?" | supported · financial_twin backend · affordability analysis with approval/reserve/buffer reasons |
+| 11 | "What happens if I pay Sharma Suppliers 400000?" | what_if simulation: before → payment → after with rule outcomes |
+| 12 | "How much cash do I really have?" | true available cash with per-component provenance |
+| 13 | "Why is my available cash lower than my total balance?" | cash_position + explain — reserves called out |
+| 14 | "Which vendors have the highest payouts?" | top vendors derived from transaction descriptions |
+| 15 | "Any unusual transactions recently?" | anomaly scan over recent transactions |
 
 ## Demo flows verified (live API, Docker stack)
 

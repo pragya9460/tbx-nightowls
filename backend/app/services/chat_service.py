@@ -22,6 +22,7 @@ from ..schemas.query import (
     today as app_today,
 )
 from .answers import generate_answer
+from .confidence import confidence_for_result
 
 
 class ChatService:
@@ -54,6 +55,10 @@ class ChatService:
             )
 
         raw = understanding.query or {}
+        if raw.get("scenario"):
+            return self._handle_scenario(
+                raw, understanding, conversation_id, store, ctx
+            )
         try:
             dr = raw.get("date_range")
             if isinstance(dr, dict) and dr.get("type") in [
@@ -103,6 +108,7 @@ class ChatService:
             and not result.breakdown
         )
         status = "empty_data" if empty else "supported"
+        confidence, confidence_basis = confidence_for_result(result)
 
         answer = generate_answer(fq, result, comparison_result)
         evidence = build_evidence(fq, result)
@@ -129,12 +135,8 @@ class ChatService:
             "query": fq.model_dump(mode="json", exclude_none=True),
             "refusal": None,
             "status": status,
-            "confidence": "high" if status == "supported" else "medium",
-            "confidence_basis": (
-                "exact supported query, computed deterministically from the database"
-                if status == "supported"
-                else "valid query executed, but no records matched the filters"
-            ),
+            "confidence": confidence,
+            "confidence_basis": confidence_basis,
             "meta": {
                 "provider": understanding.provider_used,
                 "model": understanding.model_used,
@@ -144,6 +146,209 @@ class ChatService:
                 "backend": "duckdb",
             },
         }
+
+    # ----- Financial Twin scenarios (Phases 5–8) --------------------------------
+
+    def _handle_scenario(self, raw: dict, understanding: QueryUnderstanding,
+                         conversation_id: str | None, store: ConversationStore,
+                         ctx) -> dict:
+        """Execute a twin scenario through its deterministic engine and render
+        a template answer from the verified result. Same grounding contract:
+        the LLM produced only the scenario descriptor."""
+        from ..services.financial_twin import FinancialTwinEngine
+        from ..services.answers import format_inr
+
+        twin = FinancialTwinEngine(self.engine)
+        scenario = raw["scenario"]
+        try:
+            if scenario == "affordability":
+                result = twin.can_i_afford(raw["vendor"], float(raw["amount"]))
+                answer = self._afford_answer(result)
+                status, confidence, basis = (
+                    ("supported", "high",
+                     "deterministic affordability analysis from the twin engine")
+                )
+            elif scenario == "what_if":
+                result = twin.simulate_payment(raw["vendor"], float(raw["amount"]))
+                answer = self._whatif_answer(result)
+                status, confidence, basis = (
+                    ("supported", "high",
+                     "deterministic what-if simulation from the twin engine")
+                )
+            elif scenario == "cash_position":
+                result = twin.cash_position()
+                answer = self._cash_answer(result, raw.get("explain"))
+                status, confidence, basis = (
+                    ("supported", "high",
+                     "deterministic cash-position computation from the twin engine")
+                )
+            elif scenario == "vendor_profiles":
+                result = twin.vendor_profiles(limit=10)
+                top = result["vendors"][:3]
+                answer = (
+                    "Top vendors by spend (derived from transaction data): "
+                    + ", ".join(
+                        f"{v['vendor']} ({format_inr(v['total_spend'])})"
+                        for v in top
+                    ) + ". Full breakdown below."
+                    if top else "No vendor history found in the dataset."
+                )
+                status, confidence, basis = (
+                    ("supported", "high",
+                     "vendor profiles derived deterministically from transactions")
+                )
+            elif scenario == "anomalies":
+                anomalies = self._scan_anomalies(twin)
+                if anomalies:
+                    a = anomalies[0]
+                    answer = (
+                        f"⚠ Unusual transaction: {format_inr(a['current_amount'])} "
+                        f"to {a['counterparty']} — {a['reason']}."
+                    )
+                else:
+                    answer = ("No unusual transactions found in the recent "
+                              "history I checked (threshold-based rule).")
+                result = {"anomalies": anomalies}
+                status, confidence, basis = (
+                    ("supported", "high",
+                     "deterministic anomaly rule over transaction history")
+                )
+            else:
+                return self._refusal_response(
+                    understanding, None, conversation_id, store,
+                    reason=QueryRefusalReason.UNSUPPORTED_METRIC,
+                    message="That scenario type isn't supported yet.",
+                )
+        finally:
+            pass  # engine lifecycle owned by the route handler
+
+        if conversation_id:
+            ctx.apply_scenario(scenario, answer[:120])
+
+        return {
+            "conversation_id": conversation_id or "anonymous",
+            "answer": answer,
+            "evidence": {
+                "how_calculated": {
+                    "date_range": "current position",
+                    "operation": f"SCENARIO({scenario})",
+                    "records_matched": (
+                        len(result.get("vendors", []))
+                        if scenario == "vendor_profiles"
+                        else len(result.get("anomalies", []))
+                        if scenario == "anomalies"
+                        else 1
+                    ),
+                    "filters": {
+                        k: v for k, v in raw.items()
+                        if k in ("vendor", "amount", "explain")
+                    },
+                },
+                "source": (
+                    "Financial Twin — deterministic engine "
+                    "(accounts/rules/reserves from labelled demo config; "
+                    "amounts from the dataset)"
+                ),
+                "grounded": True,
+                "scenario_result": result,
+            },
+            "query": raw,
+            "refusal": None,
+            "status": status,
+            "confidence": confidence,
+            "confidence_basis": basis,
+            "meta": {
+                "provider": understanding.provider_used,
+                "model": understanding.model_used,
+                "understanding_latency_ms": understanding.latency_ms,
+                "token_usage": understanding.token_usage,
+                "grounded": True,
+                "backend": "financial_twin",
+            },
+        }
+
+    @staticmethod
+    def _afford_answer(r: dict) -> str:
+        from ..services.answers import format_inr
+
+        verdict = (
+            "Yes — that payment is affordable."
+            if r["affordable"] and not r["approval_required"]
+            else "Yes, but it will require approval."
+            if r["affordable"]
+            else "Not safely based on your current financial position."
+        )
+        reasons = " ".join(r["reasons"])
+        return f"{verdict} {reasons}".strip()
+
+    @staticmethod
+    def _whatif_answer(r: dict) -> str:
+        from ..services.answers import format_inr
+
+        ro = r["rules_outcome"]
+        return (
+            f"Before payment: {format_inr(r['before']['true_available_cash'])}. "
+            f"Payment: {format_inr(r['payment_amount'])}. "
+            f"After payment: {format_inr(r['after']['true_available_cash'])}. "
+            f"Reserves {ro['payroll_reserve']}; minimum buffer "
+            f"{ro['minimum_buffer']}; approval {ro['approval']}. "
+            f"This is a static simulation — no payment was executed."
+        )
+
+    @staticmethod
+    def _cash_answer(r: dict, explain: bool) -> str:
+        from ..services.answers import format_inr
+
+        base = (
+            f"Your true available cash is {format_inr(r['true_available_cash'])}: "
+            f"{format_inr(r['available_balance'])} across accounts, minus "
+            f"{format_inr(r['protected_reserves'])} in protected reserves."
+        )
+        if explain:
+            base += (
+                " Available cash is lower than the raw total because protected "
+                "reserves (payroll, GST) are earmarked and excluded."
+            )
+        return base
+
+    @staticmethod
+    def _scan_anomalies(twin) -> list[dict]:
+        from ..services.anomaly import evaluate_transaction, DEFAULT_MULTIPLIER, DEFAULT_MIN_HISTORY
+        from ..services.vendor_intel import extract_counterparty
+
+        con = twin.db._con
+        rows = con.execute(
+            """
+            SELECT description, transaction_amount, transaction_date
+            FROM "transaction"
+            WHERE description IS NOT NULL
+            ORDER BY transaction_date DESC
+            LIMIT 500
+            """
+        ).fetchall()
+        cols = ["description", "transaction_amount", "transaction_date"]
+        txns = [dict(zip(cols, r)) for r in rows]
+        history: dict[str, list[dict]] = {}
+        for t in txns:
+            cp = extract_counterparty(t["description"])
+            if cp:
+                history.setdefault(cp, []).append(t)
+        anomalies = []
+        for t in txns:
+            cp = extract_counterparty(t["description"])
+            if not cp:
+                continue
+            hist = [h for h in history.get(cp, []) if h is not t]
+            v = evaluate_transaction(t, hist)
+            if v.is_anomalous:
+                d = v.to_dict()
+                d["transaction_date"] = (
+                    t["transaction_date"].isoformat() if t["transaction_date"] else None
+                )
+                anomalies.append(d)
+                if len(anomalies) >= 5:
+                    break
+        return anomalies
 
     def _refusal_response(self, understanding, provider, conversation_id, store,
                           reason: QueryRefusalReason | None = None, message: str | None = None,

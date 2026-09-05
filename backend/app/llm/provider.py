@@ -141,6 +141,13 @@ class RuleBasedProvider(LLMProvider):
         context = context or {}
         today = app_today()
 
+        # 0. Financial Twin scenarios FIRST — "Can I pay Sharma Suppliers
+        #    ₹4 lakh?" mentions "pay"/"vendor" and must not hit the
+        #    unsupported-domain gate. These route to deterministic engines.
+        twin = self._twin_intent(q, question, context or {}, today)
+        if twin is not None:
+            return twin
+
         # 1. Unsupported domains — refuse, never guess.
         for pat, what in UNSUPPORTED_DOMAINS:
             if re.search(pat, q):
@@ -201,6 +208,12 @@ class RuleBasedProvider(LLMProvider):
                 range_spec=self._date_spec(q, today),
             )
 
+        # 2c. Financial Twin scenarios (deterministic engines downstream):
+        #     affordability / what-if / true cash position.
+        twin = self._twin_intent(q, question, context, today)
+        if twin is not None:
+            return twin
+
         # 3. Balance / account / bank intelligence.
         #    Transaction questions that mention a bank ("from my SBI
         #    accounts") must NOT be captured by the account-list gate below.
@@ -228,6 +241,62 @@ class RuleBasedProvider(LLMProvider):
         if refinement is not None:
             return refinement
         return self._transaction_intent(question, context, today)
+
+    # ----- Financial Twin scenario intents (Phases 5–8) -----------------------
+
+    def _twin_intent(self, q: str, question: str, context: dict,
+                     today: dt.date) -> QueryUnderstanding | None:
+        """Route twin scenarios to dedicated query descriptors. Returns None
+        when the question isn't a twin scenario."""
+        # "Can I pay X ₹Y?" / "Can I afford X ₹Y?"
+        m = re.search(r"can i (?:pay|afford)\s+(?:the\s+)?(?:vendor\s+)?"
+                      r"(.+?)\s+(?:₹|rs\.?|inr)?\s*([\d,]+(?:\.\d+)?)", q)
+        if m:
+            return QueryUnderstanding(
+                query={
+                    "scenario": "affordability",
+                    "vendor": m.group(1).strip().upper(),
+                    "amount": float(m.group(2).replace(",", "")),
+                },
+                provider_used=self.name,
+            )
+        # "What happens if I pay X ₹Y?"
+        m = re.search(r"what happens if i pay\s+(?:the\s+)?(?:vendor\s+)?"
+                      r"(.+?)\s+(?:₹|rs\.?|inr)?\s*([\d,]+(?:\.\d+)?)", q)
+        if m:
+            return QueryUnderstanding(
+                query={
+                    "scenario": "what_if",
+                    "vendor": m.group(1).strip().upper(),
+                    "amount": float(m.group(2).replace(",", "")),
+                },
+                provider_used=self.name,
+            )
+        # "How much cash do I really have?" / "true available cash"
+        if re.search(r"how much cash do i (really|actually) have|true available cash|really have available|cash position", q):
+            return QueryUnderstanding(
+                query={"scenario": "cash_position"},
+                provider_used=self.name,
+            )
+        # "Why is my available cash lower than my total balance?" — same engine
+        if re.search(r"why is my (available )?cash lower|why.*cash.*lower than.*balance", q):
+            return QueryUnderstanding(
+                query={"scenario": "cash_position", "explain": True},
+                provider_used=self.name,
+            )
+        # Vendor intelligence questions
+        if re.search(r"which vendors have the (highest|most) (payouts|spend|transactions)", q):
+            return QueryUnderstanding(
+                query={"scenario": "vendor_profiles"},
+                provider_used=self.name,
+            )
+        # Anomaly questions
+        if re.search(r"unusual (payout|transaction)|any anomalies|unusually large", q):
+            return QueryUnderstanding(
+                query={"scenario": "anomalies"},
+                provider_used=self.name,
+            )
+        return None
 
     # ----- intent builders ----------------------------------------------------
 

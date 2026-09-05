@@ -117,10 +117,28 @@ bigger model.
 
 ## Current measured status
 
-`results.json` (rule-based baseline, no API cost): **33/33 = 1.00 accuracy,
-0.1 ms average latency**. The Anthropic-provider run is captured the same way
-once `ANTHROPIC_API_KEY` is present; compare both files to justify the final
-model choice with data rather than claims.
+### Comparison table
+
+| Provider / model | Accuracy | Validation failures | Unsupported-domain misses | Avg latency | Total tokens | Notes |
+|---|---|---|---|---|---|---|
+| `rule_based` (no LLM) | **1.00** (33/33) | 0 | 0 | 0.1 ms | 0 | Deterministic baseline; regex mapping. Proves the architecture carries accuracy. |
+| `anthropic` · `claude-haiku-4-5` | pending run | — | — | — | — | Needs `ANTHROPIC_API_KEY`; run with the command below. Expected ≥ 0.95 per threshold table above. |
+
+### Reproducing the Anthropic row (one command)
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...   # or put it in .env
+python evaluation/run_eval.py --provider anthropic
+# writes evaluation/results.json; append the numbers to the table above
+```
+
+The rule-based row regenerates with `--provider rule_based`. Both runs
+record per-case accuracy (computed from execution), latency, token usage,
+and failure category — no numbers in this document are asserted without a
+harness run behind them.
+
+Latest run (`evaluation/results.json`, rule-based): **33/33 = 1.00, 0.1 ms
+avg latency, 0 tokens**.
 
 > We deliberately constrain the LLM to query understanding and use
 > deterministic systems for financial computation, allowing a lightweight

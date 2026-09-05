@@ -32,8 +32,12 @@ export interface ChatResponse {
     provider?: string;
     model?: string | null;
     understanding_latency_ms?: number | null;
+    token_usage?: { input_tokens?: number | null; output_tokens?: number | null } | null;
     grounded: boolean;
   };
+  status?: "supported" | "empty_data" | "ambiguous" | "unsupported" | "invalid";
+  confidence?: "high" | "limited" | "no_matches" | "none";
+  confidence_basis?: string | null;
 }
 
 export interface ChatMessage {
@@ -45,4 +49,6 @@ export interface ChatMessage {
   meta?: ChatResponse["meta"];
   isError?: boolean;
   suggestions?: string[];
+  confidence?: "high" | "limited" | "no_matches" | "none";
+  confidence_basis?: string | null;
 }

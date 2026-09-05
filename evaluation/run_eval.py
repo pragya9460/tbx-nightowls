@@ -37,6 +37,23 @@ def check(q: FinancialQuery | None, case: dict) -> tuple[bool, list[str]]:
     """Score one case against the validated query. Returns (passed, fails)."""
     failures = []
     if q is None:
+        # Twin scenario cases: the raw understanding (not a FinancialQuery)
+        # is stashed on the case by the runner.
+        if case.get("scenario"):
+            raw = case.get("_scenario_raw")
+            if raw is None:
+                return False, ["scenario case without raw understanding"]
+            if raw.get("scenario") != case["scenario"]:
+                failures.append(
+                    f"scenario: want {case['scenario']}, got {raw.get('scenario')}")
+            if case.get("scenario_explain") and not raw.get("explain"):
+                failures.append("scenario explain flag missing")
+            if case.get("expected_filters"):
+                for k, v in case["expected_filters"].items():
+                    if raw.get(k) != v:
+                        failures.append(
+                            f"scenario field {k}: want {v!r}, got {raw.get(k)!r}")
+            return (len(failures) == 0), failures
         if case.get("expected_refusal"):
             return True, []   # refusal expected, got one at understanding stage
         return False, ["no query produced"]
@@ -96,10 +113,15 @@ def main() -> int:
         q = None
         validation_error = None
         if u.query:
-            try:
-                q = FinancialQuery.model_validate(u.query)
-            except Exception as e:
-                validation_error = str(e)
+            if u.query.get("scenario"):
+                # Twin scenario: not a FinancialQuery — pass raw through
+                case["_scenario_raw"] = u.query
+                case["got_intent"] = None
+            else:
+                try:
+                    q = FinancialQuery.model_validate(u.query)
+                except Exception as e:
+                    validation_error = str(e)
 
         if validation_error:
             passed, failures = False, [f"validation error: {validation_error}"]
