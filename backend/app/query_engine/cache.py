@@ -6,6 +6,7 @@ data with a short TTL.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import threading
@@ -110,7 +111,9 @@ def result_from_cache_dict(data: dict[str, Any]) -> QueryResult:
 
 
 def result_to_cache_dict(result: QueryResult) -> dict[str, Any]:
-    return result.to_dict()
+    # Deep snapshot: the cache must never alias a live QueryResult, or a
+    # caller mutating their copy would corrupt the cached financial values.
+    return copy.deepcopy(result.to_dict())
 
 
 def get_cached_result(q: FinancialQuery) -> QueryResult | None:
@@ -120,7 +123,7 @@ def get_cached_result(q: FinancialQuery) -> QueryResult | None:
     data = get_cache_backend().get(key)
     if not data:
         return None
-    result = result_from_cache_dict(data)
+    result = result_from_cache_dict(copy.deepcopy(data))
     result.query_metadata = dict(result.query_metadata)
     result.query_metadata["cache_hit"] = True
     return result

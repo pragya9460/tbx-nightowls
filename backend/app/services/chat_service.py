@@ -93,6 +93,17 @@ class ChatService:
         else:
             result = self.engine.execute(fq)
 
+        # Answer status (interpretable signals, never fake probabilities):
+        #   supported  — exact supported query, deterministic result
+        #   empty_data — valid query, zero matching records (a real zero)
+        # Ambiguous/unsupported/invalid questions never reach this point.
+        empty = (
+            result.summary.get("record_count") == 0
+            and not result.records
+            and not result.breakdown
+        )
+        status = "empty_data" if empty else "supported"
+
         answer = generate_answer(fq, result, comparison_result)
         evidence = build_evidence(fq, result)
         if comparison_result is not None:
@@ -117,10 +128,18 @@ class ChatService:
             "evidence": evidence,
             "query": fq.model_dump(mode="json", exclude_none=True),
             "refusal": None,
+            "status": status,
+            "confidence": "high" if status == "supported" else "medium",
+            "confidence_basis": (
+                "exact supported query, computed deterministically from the database"
+                if status == "supported"
+                else "valid query executed, but no records matched the filters"
+            ),
             "meta": {
                 "provider": understanding.provider_used,
                 "model": understanding.model_used,
                 "understanding_latency_ms": understanding.latency_ms,
+                "token_usage": understanding.token_usage,
                 "grounded": True,
                 "backend": "duckdb",
             },
@@ -143,6 +162,17 @@ class ChatService:
             "evidence": None,
             "query": None,
             "refusal": r.model_dump(),
+            "status": {
+                "unsupported_metric": "unsupported",
+                "unsupported_field": "unsupported",
+                "ambiguous": "ambiguous",
+                "invalid_structure": "invalid",
+                "no_data": "empty_data",
+            }.get(r.reason.value, "unsupported"),
+            "confidence": "none",
+            "confidence_basis": (
+                "the question could not be mapped to a supported query; nothing was executed"
+            ),
             "meta": {
                 "provider": understanding.provider_used,
                 "model": understanding.model_used,

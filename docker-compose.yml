@@ -1,8 +1,10 @@
 services:
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    # No host port: the backend reaches redis over the compose network.
+    # (A local dev Redis often already owns 6379 on the host.)
+    expose:
+      - "6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s

@@ -42,6 +42,7 @@ class QueryUnderstanding:
     model_used: str | None = None
     provider_used: str | None = None
     latency_ms: int | None = None
+    token_usage: dict | None = None  # {"input_tokens": n, "output_tokens": n}
 
 
 class LLMProvider(ABC):
@@ -223,6 +224,9 @@ class RuleBasedProvider(LLMProvider):
             return self._account_list(q, context, today)
 
         # 4. Transaction intelligence.
+        refinement = self._refinement_followup(question, q, context, today)
+        if refinement is not None:
+            return refinement
         return self._transaction_intent(question, context, today)
 
     # ----- intent builders ----------------------------------------------------
@@ -296,6 +300,63 @@ class RuleBasedProvider(LLMProvider):
             filters=filters,
             range_spec={"type": "all_time"},
             limit=25,
+        )
+
+    def _refinement_followup(self, question: str, q: str, context: dict,
+                             today: dt.date) -> QueryUnderstanding | None:
+        """Conversation 2 in the spec: a BARE filter refinement on the previous
+        turn's listing — "Only those above ₹50,000.", "just the credits",
+        "below 10,000". The question has no new subject of its own; it inherits
+        the previous intent + filters + date range and merges the new
+        constraint. Returns None when this isn't a refinement."""
+        last_intent = context.get("last_intent")
+        if last_intent not in ("transaction_list", "transaction_summary",
+                               "top_descriptions"):
+            return None
+        # Must reference the prior result without naming a new subject
+        # ("those", "them", "only", "just") or be a bare amount/type clause.
+        refers_back = re.search(
+            r"\b(only|just|those|them|filter|narrow|restrict)\b", q
+        )
+        new_subject = re.search(
+            r"\b(balance|account|bank holds|which bank|compare|month before)\b", q
+        )
+        if new_subject or not refers_back:
+            return None
+
+        amount = None
+        m = re.search(r"(?:above|over|more than|greater than)\s*[₹]?\s*([\d,]+)", q)
+        if m:
+            amount = ("min", float(m.group(1).replace(",", "")))
+        else:
+            m = re.search(r"(?:below|under|less than)\s*[₹]?\s*([\d,]+)", q)
+            if m:
+                amount = ("max", float(m.group(1).replace(",", "")))
+        type_switch = None
+        if re.search(r"\b(credits?|money in|inflows?)\b", q):
+            type_switch = "credit"
+        elif re.search(r"\b(debits?|money out|outflows?)\b", q):
+            type_switch = "debit"
+        if amount is None and type_switch is None:
+            return None
+
+        filters = dict(context.get("last_filters") or {})
+        if amount:
+            key, value = amount
+            filters[key + "_amount"] = value
+        if type_switch:
+            filters["transaction_type"] = type_switch
+        range_spec = context.get("last_date_range") or {"type": "calendar_month"}
+        # The stored range is an already-resolved absolute range dict.
+        return self._validated(
+            intent=Intent(last_intent),
+            metric=Metric.TRANSACTION_AMOUNT if last_intent != "top_descriptions"
+            else Metric.TRANSACTION_AMOUNT,
+            aggregation=Aggregation.NONE if last_intent == "transaction_list"
+            else Aggregation.SUM,
+            filters=filters,
+            range_spec=range_spec,
+            limit=20,
         )
 
     def _transaction_intent(self, question: str, context: dict, today: dt.date) -> QueryUnderstanding:
@@ -452,6 +513,25 @@ class RuleBasedProvider(LLMProvider):
         # month" (e.g. "what is your name" → a crore figure). Refuse instead.
         if not self._is_transaction_question(q, txn_type, desc, min_amount, max_amount):
             return self._off_topic_refusal()
+        # Subjectless amount questions ("how much moved last month?") — no
+        # type cue, no description, no threshold: the SUBJECT is missing, so
+        # ask for clarification rather than silently summing everything.
+        if txn_type is None and desc is None and min_amount is None \
+           and max_amount is None and not self._extract_bank(q) \
+           and re.search(r"how much (moved|happened|went|came)|what (happened|moved)", q):
+            return QueryUnderstanding(
+                refusal_reason="ambiguous",
+                refusal_message=(
+                    "What would you like me to measure — money out (debits), "
+                    "money in (credits), or transactions?"
+                ),
+                suggestions=[
+                    "How much did I spend last month?",
+                    "How much money came in last month?",
+                    "How many transactions happened last month?",
+                ],
+                provider_used=self.name,
+            )
 
         return self._validated(
             intent=Intent.TRANSACTION_SUMMARY,
@@ -793,6 +873,16 @@ class AnthropicProvider(LLMProvider):
         text = next((b.text for b in response.content if b.type == "text"), "")
         latency = int((time.monotonic() - started) * 1000)
 
+        # Token usage — required for the model-efficiency benchmark
+        # (docs/model-evaluation.md). None when the API doesn't report it.
+        usage = getattr(response, "usage", None)
+        token_usage = None
+        if usage is not None:
+            token_usage = {
+                "input_tokens": getattr(usage, "input_tokens", None),
+                "output_tokens": getattr(usage, "output_tokens", None),
+            }
+
         try:
             data = json.loads(text)
         except Exception:
@@ -802,6 +892,7 @@ class AnthropicProvider(LLMProvider):
                 provider_used=self.name,
                 model_used=self.model,
                 latency_ms=latency,
+                token_usage=token_usage,
             )
 
         if data.get("refusal"):
@@ -811,6 +902,7 @@ class AnthropicProvider(LLMProvider):
                 provider_used=self.name,
                 model_used=self.model,
                 latency_ms=latency,
+                token_usage=token_usage,
             )
 
         return QueryUnderstanding(
@@ -818,6 +910,7 @@ class AnthropicProvider(LLMProvider):
             provider_used=self.name,
             model_used=self.model,
             latency_ms=latency,
+            token_usage=token_usage,
         )
 
 

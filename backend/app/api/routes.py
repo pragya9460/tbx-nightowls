@@ -1,14 +1,18 @@
 """REST endpoints — DuckDB-backed chat and structured query."""
 from __future__ import annotations
 
+import csv
+import io
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from .. import config
 from ..conversation.memory import ConversationStore
 from ..query_engine.duckdb_engine import DuckDBQueryEngine
 from ..schemas.query import FinancialQuery, QueryRefusalReason, previous_period, refusal
 from ..services.chat_service import ChatService
-from .schemas import ChatRequest, ChatResponse, HealthResponse, QueryRequest
+from .schemas import ChatRequest, ChatResponse, EvidenceExportRequest, HealthResponse, QueryRequest
 
 router = APIRouter(prefix="/api")
 
@@ -70,6 +74,11 @@ def run_query(req: QueryRequest) -> ChatResponse:
                 conversation_id="direct",
                 answer=r.message,
                 refusal=r.model_dump(),
+                status="invalid",
+                confidence="none",
+                confidence_basis=(
+                    "the structured query failed validation; nothing was executed"
+                ),
                 meta={"grounded": False, "backend": "duckdb"},
             )
 
@@ -92,13 +101,82 @@ def run_query(req: QueryRequest) -> ChatResponse:
         if comparison_result is not None:
             evidence["comparison"] = build_evidence(fq, comparison_result)
 
+        empty = (
+            result.summary.get("record_count") == 0
+            and not result.records
+            and not result.breakdown
+        )
+        status = "empty_data" if empty else "supported"
+
         return ChatResponse(
             conversation_id="direct",
             answer=answer,
             evidence=evidence,
             query=fq.model_dump(mode="json", exclude_none=True),
             refusal=None,
+            status=status,
+            confidence="high" if status == "supported" else "medium",
+            confidence_basis=(
+                "exact supported query, computed deterministically from the database"
+                if status == "supported"
+                else "valid query executed, but no records matched the filters"
+            ),
             meta={"grounded": True, "provider": "none", "backend": "duckdb"},
         )
     finally:
         service.engine.close()
+
+
+@router.post("/export/evidence")
+def export_evidence(req: EvidenceExportRequest) -> StreamingResponse:
+    """Export an evidence block's records/breakdown exactly as displayed.
+
+    The rows are passed through verbatim (masked, capped — the same list the
+    UI rendered), so the export can never contain more sensitive detail than
+    the user already saw.
+    """
+    rows = req.rows
+    if not rows:
+        raise HTTPException(status_code=422, detail="no rows to export")
+    columns: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in columns:
+                columns.append(key)
+
+    fmt = (req.format or "csv").lower()
+    if fmt == "excel":
+        try:
+            from openpyxl import Workbook
+        except ImportError:
+            raise HTTPException(
+                status_code=501,
+                detail="Excel export needs the openpyxl package installed",
+            )
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "evidence"
+        ws.append(columns)
+        for row in rows:
+            ws.append([row.get(c) for c in columns])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="artha_evidence.xlsx"'},
+        )
+
+    # default: CSV
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="artha_evidence.csv"'},
+    )

@@ -122,14 +122,32 @@ def main() -> int:
             "got_intent": q.intent.value if q else None,
             "refusal_reason": u.refusal_reason,
             "failures": failures,
+            "failure_category": (
+                "validation" if validation_error else
+                ("refusal_mismatch" if failures and "refusal reason" in failures[0]
+                 else ("wrong_intent" if failures and "intent" in failures[0]
+                       else ("wrong_filter" if failures and "filter" in failures[0]
+                             else ("wrong_group" if failures and "group_by" in failures[0]
+                                   else ("wrong_range" if failures and "date_range" in failures[0]
+                                         else ("unexpected_query" if "expected refusal, got a query" in failures
+                                               else ("no_query" if "no query produced" in failures
+                                                     else "other")) if failures else None)))))
+            ),
             "passed": passed,
             "latency_ms": latency_ms,
+            "token_usage": u.token_usage,
             "provider": u.provider_used,
             "model": u.model_used,
         })
 
     total = len(results)
     correct = sum(1 for r in results if r["passed"])
+    token_sums = {}
+    for r in results:
+        if r.get("token_usage"):
+            for k, v in r["token_usage"].items():
+                if isinstance(v, (int, float)):
+                    token_sums[k] = token_sums.get(k, 0) + v
     summary = {
         "provider": args.provider,
         "model": args.model,
@@ -137,6 +155,11 @@ def main() -> int:
         "correct": correct,
         "accuracy": round(correct / total, 4) if total else 0,
         "avg_latency_ms": round(sum(r["latency_ms"] for r in results) / total, 1) if total else 0,
+        "total_tokens": token_sums or None,
+        "failure_categories": {
+            cat: sum(1 for r in results if r.get("failure_category") == cat)
+            for cat in {r.get("failure_category") for r in results if r.get("failure_category")}
+        } or None,
         "ran_at": dt.datetime.now(dt.timezone.utc).isoformat(),
     }
 
