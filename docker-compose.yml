@@ -21,15 +21,18 @@ services:
       ARTHA_DATABASE_URL: postgresql+psycopg2://artha:artha@postgres:5432/artha
       ARTHA_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ARTHA_LLM_PROVIDER: ${ARTHA_LLM_PROVIDER:-}
+      WATCHFILES_FORCE_POLLING: "true"
     depends_on:
       postgres:
         condition: service_healthy
     ports:
       - "8000:8000"
-    # Seeds the database on first boot, then serves the API.
+    volumes:
+      - ./backend:/app
+    # Seeds the database on first boot, then serves the API with development reloads.
     command: >
       sh -c "python scripts/load_data.py --generate --drop --data-dir /app/seed-data &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app"
 
   frontend:
     build: ./frontend
