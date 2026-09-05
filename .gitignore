@@ -21,3 +21,5 @@ seed-data/
 
 .serena
 backend/artha.db
+frontend/node_modules
+frontend/dist
