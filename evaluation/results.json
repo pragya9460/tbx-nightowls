@@ -2,11 +2,11 @@
   "summary": {
     "provider": "rule_based",
     "model": null,
-    "total": 31,
-    "correct": 31,
+    "total": 33,
+    "correct": 33,
     "accuracy": 1.0,
-    "avg_latency_ms": 0.0,
-    "ran_at": "2026-09-05T06:29:40.001215+00:00"
+    "avg_latency_ms": 0.1,
+    "ran_at": "2026-09-05T07:03:26.437090+00:00"
   },
   "results": [
     {
@@ -16,7 +16,7 @@
       "refusal_reason": null,
       "failures": [],
       "passed": true,
-      "latency_ms": 0,
+      "latency_ms": 1,
       "provider": "rule_based",
       "model": null
     },
@@ -82,7 +82,7 @@
       "refusal_reason": null,
       "failures": [],
       "passed": true,
-      "latency_ms": 1,
+      "latency_ms": 0,
       "provider": "rule_based",
       "model": null
     },
@@ -307,6 +307,28 @@
       "model": null
     },
     {
+      "question": "what is your name",
+      "expected_intent": null,
+      "got_intent": null,
+      "refusal_reason": "unsupported",
+      "failures": [],
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
+      "question": "Who are you?",
+      "expected_intent": null,
+      "got_intent": null,
+      "refusal_reason": "unsupported",
+      "failures": [],
+      "passed": true,
+      "latency_ms": 0,
+      "provider": "rule_based",
+      "model": null
+    },
+    {
       "question": "How much did we spend on vendor payouts?",
       "expected_intent": null,
       "got_intent": null,
@@ -335,7 +357,7 @@
       "refusal_reason": null,
       "failures": [],
       "passed": true,
-      "latency_ms": 0,
+      "latency_ms": 1,
       "provider": "rule_based",
       "model": null
     },

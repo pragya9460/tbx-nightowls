@@ -70,6 +70,33 @@ UNSUPPORTED_DOMAINS = [
     (r"loan|emi|credit score", "loan/credit data"),
 ]
 
+_FINANCE_SUGGESTIONS = [
+    "What is my total available balance?",
+    "How much did I spend last month?",
+    "Which bank holds the most money?",
+]
+
+# Identity / chit-chat — must not fall through to a transaction total.
+_IDENTITY = re.compile(
+    r"\b("
+    r"what(?:['’]?s| is) your name"
+    r"|who are you"
+    r"|what are you(?: called)?"
+    r"|tell me your name"
+    r")\b"
+)
+_CHITCHAT = re.compile(
+    r"^(hi+|hello|hey|yo|thanks|thank you|good (morning|afternoon|evening)|ok|okay)"
+    r"[\s!.?]*$"
+)
+_TXN_QUESTION = re.compile(
+    r"\b("
+    r"transaction|transactions|spend|spent|spending|paid|debit|credit|"
+    r"received|incoming|inflow|outgoing|withdrew|withdraw|"
+    r"how much|how many|amount|rupees?|money|inr"
+    r")\b|₹"
+)
+
 _MONTH_NAMES = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
     "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
@@ -122,13 +149,13 @@ class RuleBasedProvider(LLMProvider):
                         f"I can't answer that because {what} is not available in the "
                         "current dataset, which covers bank accounts and transactions only."
                     ),
-                    suggestions=[
-                        "What is my total available balance?",
-                        "How much did I spend last month?",
-                        "Which bank holds the most money?",
-                    ],
+                    suggestions=list(_FINANCE_SUGGESTIONS),
                     provider_used=self.name,
                 )
+
+        # 1b. Identity / greetings — never guess a financial total.
+        if _IDENTITY.search(q) or _CHITCHAT.search(q):
+            return self._off_topic_refusal()
 
         # 2. Reference / UTR lookup — must come before spend detection, and
         #    must use the ORIGINAL question: reference ids and UTRs are
@@ -420,7 +447,12 @@ class RuleBasedProvider(LLMProvider):
                 comparison={"against": "previous_period"},
             )
 
-        # ----- generic summary ------------------------------------------------------------
+        # ----- generic summary — only if this actually looks like a finance question.
+        # Unmatched chit-chat used to fall through to "sum all transactions last
+        # month" (e.g. "what is your name" → a crore figure). Refuse instead.
+        if not self._is_transaction_question(q, txn_type, desc, min_amount, max_amount):
+            return self._off_topic_refusal()
+
         return self._validated(
             intent=Intent.TRANSACTION_SUMMARY,
             metric=Metric.TRANSACTION_AMOUNT,
@@ -430,6 +462,30 @@ class RuleBasedProvider(LLMProvider):
         )
 
     # ----- helpers ---------------------------------------------------------------
+
+    def _off_topic_refusal(self) -> QueryUnderstanding:
+        return QueryUnderstanding(
+            refusal_reason="unsupported",
+            refusal_message=(
+                "I'm Artha, a finance assistant for your bank accounts and "
+                "transactions. I can only answer questions the current dataset "
+                "supports — balances, spend, inflows, and transaction lookups."
+            ),
+            suggestions=list(_FINANCE_SUGGESTIONS),
+            provider_used=self.name,
+        )
+
+    def _is_transaction_question(
+        self,
+        q: str,
+        txn_type: str | None,
+        desc: str | None,
+        min_amount: float | None,
+        max_amount: float | None,
+    ) -> bool:
+        if txn_type or desc or min_amount is not None or max_amount is not None:
+            return True
+        return bool(_TXN_QUESTION.search(q))
 
     def _extract_bank(self, q: str) -> str | None:
         return _extract_bank(q)
@@ -588,6 +644,11 @@ monthly_trend, comparison, account_balance, account_list, bank_balance,
 bank_account_count, reference_lookup.
 
 Rules:
+- If the question is identity, greeting, or unrelated to this financial
+  dataset (e.g. "what is your name", "who are you", "hello", weather),
+  refuse: {"refusal": "unsupported", "message": "I'm Artha, a finance
+  assistant for your bank accounts and transactions. I can only answer
+  questions the current dataset supports."}.
 - If the question needs data outside these tables (payroll, taxes, invoices,
   vendors, profit, forecasts), refuse: {"refusal": "unsupported", "message": "..."}.
 - If the user says "spent" with no qualifier, that maps to transaction_type

@@ -1,6 +1,6 @@
 """Structured financial query representation — the semantic layer.
 
-This sits between the LLM and SQL. The LLM emits JSON that must validate
+This sits between the LLM and DuckDB. The LLM emits JSON that must validate
 against these models *before* anything touches the database. Every enum is a
 closed allowlist over the ACTUAL TBX schema (bank / account / transaction) —
 unsupported values are rejected with a structured error, which is the

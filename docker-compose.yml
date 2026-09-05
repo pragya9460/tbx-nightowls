@@ -1,40 +1,33 @@
 services:
-  mysql:
-    image: mysql:8.4
-    environment:
-      MYSQL_ROOT_PASSWORD: artha
-      MYSQL_USER: artha
-      MYSQL_PASSWORD: artha
-      MYSQL_DATABASE: artha
+  redis:
+    image: redis:7-alpine
     ports:
-      - "3306:3306"
-    volumes:
-      - mysqldata:/var/lib/mysql
+      - "6379:6379"
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uartha -partha"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 3s
       timeout: 3s
-      retries: 30
+      retries: 10
 
   backend:
     build: ./backend
     environment:
-      ARTHA_DATABASE_URL: mysql+pymysql://artha:artha@mysql:3306/artha
-      ARTHA_ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ARTHA_DUCKDB_PATH: /app/data/finance.duckdb
+      ARTHA_DATA_DIR: /app/seed-data
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ARTHA_LLM_PROVIDER: ${ARTHA_LLM_PROVIDER:-}
-    depends_on:
-      mysql:
-        condition: service_healthy
+      ARTHA_REDIS_URL: redis://redis:6379/0
+      ARTHA_QUERY_CACHE: "1"
+      ARTHA_QUERY_CACHE_TTL: "300"
+    volumes:
+      - duckdb_data:/app/data
     ports:
       - "8000:8000"
-    # Seeds the database on first boot, then serves the API. The retry loop
-    # covers the window where MySQL reports healthy but isn't accepting
-    # connections yet.
+    depends_on:
+      redis:
+        condition: service_healthy
     command: >
-      sh -c "for i in 1 2 3 4 5 6 7 8 9 10; do
-               python scripts/load_data.py --generate --drop --data-dir /app/seed-data && break ||
-               (echo \"seed attempt $$i failed, retrying in 5s\"; sleep 5);
-             done &&
+      sh -c "python scripts/load_data.py --generate --data-dir /app/seed-data --duckdb-path /app/data/finance.duckdb &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
@@ -45,4 +38,4 @@ services:
       - "5173:80"
 
 volumes:
-  mysqldata:
+  duckdb_data:

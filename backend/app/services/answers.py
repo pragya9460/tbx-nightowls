@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from ..query_engine.engine import QueryResult
+from ..query_engine.result import QueryResult
 from ..schemas.query import FinancialQuery, Metric
 
 INR_CRORE = 10_000_000
