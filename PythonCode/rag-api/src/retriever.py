@@ -28,7 +28,7 @@ class RAGRetriever:
         self.vector_store = get_vector_store()
         self.collection = self.vector_store.get_collection(collection_name)
         self.llm = ChatAnthropic(
-            api_key=settings.anthropic_api_key,
+            anthropic_api_key=settings.anthropic_api_key,
             model=settings.anthropic_model,
             temperature=0,
         )

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_MODEL")
     anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(
-        default="claude-3-5-sonnet-20241022", validation_alias="ANTHROPIC_MODEL"
+        default="claude-haiku-4-5-20251001", validation_alias="ANTHROPIC_MODEL"
     )
     openai_embedding_model: str = Field(
         default="text-embedding-3-small", validation_alias="OPENAI_EMBEDDING_MODEL"
