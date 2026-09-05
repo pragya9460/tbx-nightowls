@@ -117,6 +117,7 @@ docker run -d --name artha-pg -p 5432:5432 \
 cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+set -a; source ../.env; set +a                 # load repository-root config
 python scripts/load_data.py --generate --drop   # seed the database
 uvicorn app.main:app --reload --port 8000
 
