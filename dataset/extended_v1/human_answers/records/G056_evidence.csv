@@ -1,0 +1,3 @@
+﻿transaction_id,vendor_id,category_code,kind,amount_minor
+00055fdf-b754-5f67-beec-4038bf682f9c,,XFER,internal_transfer,900000
+54c02dcb-e7e6-52f8-97a7-ff1a4f05ee78,,XFER,internal_transfer,-900000

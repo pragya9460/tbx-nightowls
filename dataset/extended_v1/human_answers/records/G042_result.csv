@@ -1,0 +1,2 @@
+﻿case_id,status,reason_code,as_of_date,review_note,expected_minor,observed_minor,matched_minor
+REC-UNEXPECTED,unreconciled,unexpected_bank_debit,2026-09-05,Synthetic adjudication: unexpected_bank_debit,0,230000,0

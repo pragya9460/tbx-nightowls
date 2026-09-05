@@ -1,0 +1,3 @@
+﻿transaction_id,vendor_id,category_code,kind,amount_minor
+5ab13807-fcbc-580e-97b3-4e2a7dc7d12f,5d74c914-28b2-5787-aa3b-55eaff8775e6,TECH,vendor_payment,-200000
+86bba9e3-8c33-567f-a756-968088746855,5d74c914-28b2-5787-aa3b-55eaff8775e6,TECH,vendor_payment,-2500000

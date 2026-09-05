@@ -1,0 +1,6 @@
+﻿case_id,reason_code,entry_id,expected_date,amount_minor
+REC-AMBIG,multiple_candidates,LED-AMBIG-1,2026-08-15,550000
+REC-AMBIG,multiple_candidates,LED-AMBIG-2,2026-08-15,550000
+REC-DUPLICATE,possible_duplicate,LED-DUPLICATE,2026-08-15,120000
+REC-MISMATCH,amount_mismatch,LED-MISMATCH,2026-08-15,1000000
+REC-MISSING-BANK,missing_bank_record,LED-MISSING-BANK,2026-08-15,170000

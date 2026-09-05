@@ -1,0 +1,3 @@
+﻿transaction_id,vendor_id,category_code,kind,amount_minor
+3858020e-5fe3-5ea7-ac88-fee402fd0b2d,f22c83a8-9d83-5529-a9b5-56b892019de1,SUP,vendor_payment,-320000
+7afcd258-23ab-5984-b824-c226985e7482,f22c83a8-9d83-5529-a9b5-56b892019de1,SUP,vendor_refund,320000

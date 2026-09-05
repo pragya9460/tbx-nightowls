@@ -1,0 +1,3 @@
+﻿attempt_id,payout_id,attempt_number,attempt_date,status,failure_code
+ATT-RETRY-1,PAY-RETRY,1,2026-08-15,failed,TIMEOUT
+ATT-RETRY-2,PAY-RETRY,2,2026-08-15,succeeded,

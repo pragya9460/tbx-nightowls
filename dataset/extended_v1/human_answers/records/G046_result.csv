@@ -1,0 +1,2 @@
+﻿case_id,status,reason_code,as_of_date,review_note,expected_minor,observed_minor,matched_minor
+REC-MISSING-REF,reconciled,exact_match,2026-09-05,Synthetic adjudication: exact_match,45000,45000,45000

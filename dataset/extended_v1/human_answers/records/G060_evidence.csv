@@ -1,0 +1,5 @@
+﻿transaction_id,vendor_id,category_code,kind,amount_minor
+7a52a01f-04fe-41f8-97ce-88648e6865a6,9f50c1b9-b7d1-5b1c-b91d-4162a7d83ccd,SERV,vendor_payment,-27729810
+8188ba25-a7f8-5f9c-84ea-68a20db1576b,88f2432f-d934-52a9-b04a-21e1f88ff115,UTIL,vendor_payment,-88000
+a06c7b06-6951-5601-9223-64deada2d09b,f22c83a8-9d83-5529-a9b5-56b892019de1,SUP,vendor_payment,-30000
+c479c701-0237-4c46-aa47-082fb1081ddd,02fa1041-ddcd-5883-8de5-e7279d532d52,LOG,vendor_payment,-1610783

@@ -47,6 +47,7 @@ The source commit is `54a98efcf15f62180a2628c59123c0f4306b7882`, on `feat/datase
 - `data_dictionary.json`: exact columns, types, primary keys and foreign keys.
 - `golden_cases.csv`: compact review sheet with question, SQL and expected result.
 - `golden_cases.json`: full contexts, numeric results, evidence queries/results and behavioral expectations.
+- [`human_answers/golden_human_answers.md`](human_answers/golden_human_answers.md): all 80 questions with human-facing expected answers, formatted result tables and links to complete evidence CSVs. CSV and JSON versions are in the same directory. These are evaluation labels, not runtime retrieval content.
 - `fixtures.json` and `csv/scenario.csv`: scenario IDs and linked records.
 - `COVERAGE.md`: mapping to the problem statement and explicit limits.
 - `generate.py`: deterministic generator using only Python's standard library.

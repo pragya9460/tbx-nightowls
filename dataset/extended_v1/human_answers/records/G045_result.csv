@@ -1,0 +1,2 @@
+﻿case_id,status,reason_code,as_of_date,review_note,expected_minor,observed_minor,matched_minor
+REC-TIMING,reconciled,timing_difference,2026-09-05,Synthetic adjudication: timing_difference,88000,88000,88000

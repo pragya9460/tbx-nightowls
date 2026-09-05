@@ -7,6 +7,7 @@ An extended finance-assistant dataset is available in [`dataset/extended_v1/`](d
 - [Ready-to-query SQLite database](dataset/extended_v1/finance.sqlite)
 - [Extended CSV tables](dataset/extended_v1/csv/)
 - [Golden questions and expected results](dataset/extended_v1/golden_cases.csv)
+- [80 human-facing questions and expected chat answers](dataset/extended_v1/human_answers/golden_human_answers.md)
 - [Business data dictionary](dataset/extended_v1/DATA_DICTIONARY.md)
 - [Problem-statement coverage and limits](dataset/extended_v1/COVERAGE.md)
 

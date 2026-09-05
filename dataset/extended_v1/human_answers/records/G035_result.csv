@@ -1,0 +1,6 @@
+﻿transaction_id,reconciliation_status,case_id,reason_code
+5eea1f24-4538-548a-960f-5b60049822a6,discrepancy,REC-MISMATCH,amount_mismatch
+86555dea-681b-5b03-be6b-e1d064618a13,ambiguous,REC-DUPLICATE,possible_duplicate
+ac34a0ed-c0d5-5798-b9f1-21f85f5402e7,unreconciled,REC-UNEXPECTED,unexpected_bank_debit
+de2ddf15-a3c5-5119-802d-ccdf7644ce91,ambiguous,REC-DUPLICATE,possible_duplicate
+ec28503b-e03f-570e-aa5f-e20508390a7d,ambiguous,REC-AMBIG,multiple_candidates
