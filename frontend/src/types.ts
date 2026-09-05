@@ -34,6 +34,7 @@ export interface ChatResponse {
     understanding_latency_ms?: number | null;
     token_usage?: { input_tokens?: number | null; output_tokens?: number | null } | null;
     grounded: boolean;
+    backend?: string;
   };
   status?: "supported" | "empty_data" | "ambiguous" | "unsupported" | "invalid";
   confidence?: "high" | "limited" | "no_matches" | "none";

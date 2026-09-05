@@ -19,7 +19,7 @@ __pycache__/
 # Docker
 seed-data/
 
-# DuckDB Text-to-SQL build artifact (rebuild via scripts/load_data.py --duckdb)
+# DuckDB artifacts (legacy; runtime is MySQL)
 data/finance.duckdb
 *.duckdb
 *.duckdb.wal
@@ -29,3 +29,5 @@ data/finance.duckdb
 backend/artha.db
 frontend/node_modules
 frontend/dist
+
+repomix.config.json

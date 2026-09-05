@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import text  # noqa: F401  (reserved for engine-agnostic use)
-
 # Canonical counterparty vocabulary for the CURRENT dataset (seed=42 uses
 # app.services.seed_data.COUNTERPARTIES). Matching is suffix/tail-based so
 # official data with the same conventions also extracts; unknown tails are

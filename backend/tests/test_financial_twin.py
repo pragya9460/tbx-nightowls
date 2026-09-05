@@ -49,12 +49,12 @@ def test_available_balance_not_reconstructed_from_transactions(twin, duck_engine
     """The twin reads account.available_balance directly; if it had summed
     transactions the total would differ (seed has 600 txns ≠ balances)."""
     r = twin.accounts_overview()
-    con = duck_engine._con
-    db_total = con.execute(
-        "SELECT SUM(available_balance) FROM account").fetchone()[0]
+    with duck_engine._con.cursor() as cur:
+        cur.execute("SELECT SUM(available_balance) AS total FROM account")
+        db_total = float(cur.fetchone()["total"])
+        cur.execute("SELECT SUM(transaction_amount) AS total FROM `transaction`")
+        txn_sum = float(cur.fetchone()["total"])
     assert abs(r["total_available_balance"] - db_total) < 0.01
-    txn_sum = con.execute(
-        "SELECT SUM(transaction_amount) FROM \"transaction\"").fetchone()[0]
     # sanity: the two are genuinely different quantities in the seed
     assert abs(txn_sum - db_total) > 1
 
@@ -110,18 +110,20 @@ def test_vendor_profiles_are_sorted_by_spend(twin):
 def test_vendor_totals_computed_not_hardcoded(twin, duck_engine):
     """Verify one vendor's total against a direct SQL computation."""
     r = twin.vendor_profiles(limit=100)
-    con = duck_engine._con
     # independently compute totals for the top vendor
     top = r["vendors"][0]["vendor"]
-    rows = con.execute(
-        """
-        SELECT transaction_amount, transaction_type, description
-        FROM "transaction" WHERE description IS NOT NULL
-        """
-    ).fetchall()
+    with duck_engine._con.cursor() as cur:
+        cur.execute(
+            """
+            SELECT transaction_amount, transaction_type, description
+            FROM `transaction` WHERE description IS NOT NULL
+            """
+        )
+        rows = cur.fetchall()
     from app.services.vendor_intel import extract_counterparty
-    expected = sum(float(a) for a, t, d in rows
-                   if t == "debit" and extract_counterparty(d) == top)
+    expected = sum(float(r["transaction_amount"]) for r in rows
+                   if r["transaction_type"] == "debit"
+                   and extract_counterparty(r["description"]) == top)
     assert r["vendors"][0]["total_spend"] == pytest.approx(expected, rel=1e-6)
 
 

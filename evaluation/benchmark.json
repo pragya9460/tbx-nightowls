@@ -168,7 +168,10 @@
   },
   {
     "question": "How much did we spend on vendor payouts?",
-    "expected_refusal": "unsupported"
+    "expected_intent": "transaction_summary",
+    "expected_filters": {
+      "transaction_type": "debit"
+    }
   },
   {
     "question": "How much did I spend in August?",

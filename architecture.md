@@ -49,8 +49,8 @@ flowchart TD
     SD --> SC[Scenario Dispatch<br/>validated against known scenarios]
     V --> G[Grounding / Schema Guardrails<br/>SQL-token screening<br/>server-side date resolution]
 
-    G --> QE[Deterministic Query Engine<br/>FinancialQuery → sqlglot-verified SELECT<br/>parameter-bound]
-    QE --> DB[(DuckDB<br/>bank · account · transaction<br/>read-only)]
+    G --> QE[Deterministic Query Engine<br/>FinancialQuery → compiled SELECT<br/>parameter-bound]
+    QE --> DB[(MySQL<br/>bank · account · transaction<br/>read-only session)]
     DB -- masked rows --> R[Verified Financial Result<br/>QueryResult — the grounding contract]
 
     SC --> TE[Financial Twin Engines<br/>cash · affordability · simulation<br/>vendor intel · anomaly]
@@ -90,9 +90,9 @@ Example request: **"How much did we spend on vendor payouts last month?"**
 5. Guardrails resolve dates server-side ("last month" → absolute range on
    the IST clock) and screen filter values for SQL tokens.
 6. The deterministic engine compiles the validated query to a single
-   parameterized SELECT (sqlglot-verified), executes it in **read-only**
-   DuckDB, and computes the matched-record count pre-limit.
-7. DuckDB returns rows; the engine masks `account_number`/`utr_number` at
+   parameterized SELECT, executes it in a **read-only** MySQL session, and
+   computes the matched-record count pre-limit.
+7. MySQL returns rows; the engine masks `account_number`/`utr_number` at
    the boundary and builds the typed `QueryResult`.
 8. Aggregates/peaks/comparisons are computed in the engine (comparison =
    second execution against the previous calendar month).
@@ -109,7 +109,7 @@ Example request: **"How much did we spend on vendor payouts last month?"**
 ## 4. Grounding architecture
 
 ```text
-LLM ──draft JSON──▶ validation ──▶ deterministic SQL ──▶ DuckDB
+LLM ──draft JSON──▶ validation ──▶ deterministic SQL ──▶ MySQL
                                                         │
         answer ◀── templates ◀── QueryResult ◀──────────┘
                                    (verified, masked)
@@ -132,8 +132,9 @@ Why hallucination is structurally prevented:
 - **No raw sensitive values** — masking happens inside the engine; raw
   `account_number`/`utr_number` are absent downstream (one-way masks,
   verified by test).
-- **Read-only database** — the chat path opens `finance.duckdb` with
-  `read_only=True`; no write operations exist anywhere in the API.
+- **Read-only database** — the chat path runs its MySQL session with
+  `SET SESSION TRANSACTION READ ONLY`; no write operations exist anywhere
+  in the API.
 
 ## 5. Model architecture
 
@@ -175,7 +176,7 @@ flowchart LR
         AN[Anomaly detection]
     end
 
-    DB[(DuckDB official dataset)] -- official rows --> ENG
+    DB[(MySQL official dataset)] -- official rows --> ENG
     CFG[Rules & reserves config<br/>SYNTHETIC_DEMO labelled] --> ENG
 
     ENG --> TR[Verified twin result<br/>per-component provenance]
@@ -218,8 +219,9 @@ flowchart LR
 
 ## 7. Data architecture
 
-Physical tables in `data/finance.duckdb` (built from `data/*.csv`,
-deterministic seed=42; 10 banks, 25 accounts, 8,000 transactions):
+Physical tables in the MySQL `artha` database (loaded from `data/*.csv`
+by `scripts/load_data.py`; seed=42; 10 banks, 25 accounts, 8,000
+transactions):
 
 ```mermaid
 erDiagram
@@ -271,7 +273,7 @@ Indexes match actual query patterns: `transaction_date`, `account_id`,
 | Injection | parameterized queries only; sqlglot asserts single SELECT, no DML/DDL |
 | Sensitive masking | `account_number` → `XXXXX1234`; UTR → prefix+***+suffix (engine boundary) |
 | Arbitrary SQL | none — the only SQL producer is the deterministic compiler |
-| Write operations | none; DuckDB opened read-only on the chat path |
+| Write operations | none; MySQL session forced read-only on the chat path |
 | Unsupported queries | explicit refusal naming the missing domain + capability registry |
 | Result exposure | evidence capped at 15 rows; exports are verbatim-masked |
 
@@ -329,7 +331,7 @@ For up to ~20M rows the design keeps all heavy work in the database:
 - **Aggregation at DB level** — SUM/COUNT/AVG/MIN/MAX, GROUP BY, ORDER BY,
   LIMIT are all in the compiled SQL; Python receives only result rows.
 - **Deterministic SQL, fixed shape** — a small family of parameterized
-  SELECTs lets DuckDB plan them with the pattern indexes above.
+  SELECTs lets MySQL plan them with the pattern indexes above.
 - **Result limits everywhere** — lists cap at `limit` (≤100); evidence caps
   at 15 rows; the matched count is computed with a COUNT, never by fetching.
 - **Caching** — identical validated queries reuse cached results (TTL 300s,
@@ -345,7 +347,7 @@ architecture guarantees.
 
 Intentionally **not** implemented:
 
-- Real banking integrations / live TBX APIs (read-only file dataset).
+- Real banking integrations / live TBX APIs (static CSV-loaded dataset).
 - Production authentication, multi-tenancy, per-user authorization.
 - Payment execution of any kind (affordability and simulation are
   analysis-only; tested that balances never change).

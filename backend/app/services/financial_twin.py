@@ -14,7 +14,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass, field
 
-from ..query_engine.duckdb_engine import DuckDBQueryEngine
+from ..query_engine.mysql_engine import MySQLQueryEngine, _mask_record
 from .vendor_intel import extract_counterparty
 
 # ---------------------------------------------------------------------------
@@ -80,11 +80,35 @@ class FinancialTwinEngine:
     """Deterministic Financial Twin: accounts, vendors, rules, reserves,
     cash position, affordability, what-if simulation."""
 
-    def __init__(self, engine: DuckDBQueryEngine):
+    def __init__(self, engine: MySQLQueryEngine):
         self.db = engine
         self.rules: list[FinancialRule] = []
         self.reserves: list[Reserve] = []
         self.load_demo_rules()
+
+    # ----- database access -----------------------------------------------------
+
+    def _query(self, sql: str, params: tuple = ()) -> list[dict]:
+        """Run a read-only SELECT against the engine's MySQL connection and
+        return normalized dicts (Decimal→float, datetime→isoformat)."""
+        import datetime as _dt
+
+        with self.db._con.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        out = []
+        for row in rows:
+            d = {}
+            for k, v in row.items():
+                if isinstance(v, _dt.datetime):
+                    v = v.isoformat(sep=" ")
+                elif isinstance(v, _dt.date):
+                    v = v.isoformat()
+                elif hasattr(v, "quantize"):  # Decimal
+                    v = float(v)
+                d[k] = v
+            out.append(d)
+        return out
 
     # ----- configuration -----------------------------------------------------
 
@@ -103,23 +127,14 @@ class FinancialTwinEngine:
 
     def accounts_overview(self) -> dict:
         """Official dataset facts + provenance per account."""
-        from ..query_engine.duckdb_builder import _ACCT_FROM  # same join contract
-
-        con = self.db._con
-        rows = con.execute(
-            f"""
-            SELECT a.account_id, a.account_number, a.available_balance,
-                   a.program_id, b.bank_code, b.bank_name
-            FROM {_ACCT_FROM}
+        accounts = self._query(
+            """
+            SELECT a.account_id, a.account_number AS account_number_masked,
+                   a.available_balance, a.program_id, b.bank_code, b.bank_name
+            FROM account a JOIN bank b ON a.bank_code = b.bank_code
             ORDER BY a.available_balance DESC
             """
-        ).fetchall()
-        cols = ["account_id", "account_number_masked", "available_balance",
-                "program_id", "bank_code", "bank_name"]
-        accounts = [dict(zip(cols, r)) for r in rows]
-
-        from ..query_engine.duckdb_engine import _mask_record
-
+        )
         accounts = [_mask_record(a) for a in accounts]
         total = sum(a["available_balance"] for a in accounts)
         return {
@@ -153,18 +168,14 @@ class FinancialTwinEngine:
 
     def vendor_profiles(self, limit: int = 10) -> dict:
         """Per-counterparty profiles computed from actual transactions."""
-        con = self.db._con
-        rows = con.execute(
+        txns = self._query(
             """
             SELECT t.description, t.transaction_amount, t.transaction_date,
                    t.transaction_type
-            FROM "transaction" t
+            FROM `transaction` t
             WHERE t.description IS NOT NULL
             """
-        ).fetchall()
-        cols = ["description", "transaction_amount", "transaction_date",
-                "transaction_type"]
-        txns = [dict(zip(cols, r)) for r in rows]
+        )
 
         by_cp: dict[str, list[dict]] = {}
         for t in txns:
@@ -186,9 +197,8 @@ class FinancialTwinEngine:
                 "largest_transaction": max(amounts) if amounts else 0.0,
                 "last_transaction": max(
                     (t["transaction_date"] for t in tlist
-                     if t["transaction_date"] is not None), default=None,
-                ).isoformat() if any(
-                    t["transaction_date"] is not None for t in tlist) else None,
+                     if t["transaction_date"]), default=None,
+                ),
             })
         profiles.sort(key=lambda p: p["total_spend"], reverse=True)
         return {
@@ -365,6 +375,50 @@ class FinancialTwinEngine:
             if wanted in p["vendor"] or p["vendor"] in wanted:
                 return p
         return None
+
+    # ----- anomaly scan -----------------------------------------------------------
+
+    def recent_transactions(self, limit: int = 500) -> list[dict]:
+        return self._query(
+            """
+            SELECT description, transaction_amount, transaction_date
+            FROM `transaction`
+            WHERE description IS NOT NULL
+            ORDER BY transaction_date DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+
+    def scan_anomalies(self, limit: int = 5) -> list[dict]:
+        """Deterministic anomaly scan over the most recent transactions.
+
+        Rule: amount > multiplier × counterparty historical average
+        (history excludes the transaction itself), min-history gated.
+        No ML, no LLM judgement.
+        """
+        from ..services.anomaly import evaluate_transaction
+        from .vendor_intel import extract_counterparty
+
+        txns = self.recent_transactions()
+        history: dict[str, list[dict]] = {}
+        for t in txns:
+            cp = extract_counterparty(t["description"])
+            if cp:
+                history.setdefault(cp, []).append(t)
+
+        anomalies = []
+        for t in txns:
+            cp = extract_counterparty(t["description"])
+            if not cp:
+                continue
+            hist = [h for h in history.get(cp, []) if h is not t]
+            v = evaluate_transaction(t, hist)
+            if v.is_anomalous:
+                anomalies.append(v.to_dict())
+                if len(anomalies) >= limit:
+                    break
+        return anomalies
 
     # ----- 8. what-if simulation ----------------------------------------------------------
 

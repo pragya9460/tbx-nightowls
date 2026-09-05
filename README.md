@@ -17,13 +17,13 @@ The extended dataset is a standalone evaluation fixture. The current application
 **TBX × BVP Tech Catalyst Hackathon.** Artha is a finance Q&A assistant over
 real bank data where the LLM's only job is to map a natural-language question
 to a **validated structured query**. Every financial number is computed
-deterministically by compiling that query to **DuckDB SQL** and executing it
+deterministically by compiling that query to **MySQL SQL** and executing it
 read-only — the LLM never writes SQL, never computes values, and never
 restates them.
 
 ```
 question → lightweight LLM (or rule-based fallback) → structured FinancialQuery
-        → Pydantic validation → DuckDB Text-to-SQL compiler → DuckDB (read-only)
+        → Pydantic validation → MySQL Text-to-SQL compiler → DuckDB (read-only)
         → computed result → evidence builder → template answer
         → Answer + "How I got this" evidence
 ```
@@ -59,7 +59,7 @@ reason** instead of guessing. That refusal behaviour is the core thesis:
 
 ## What was implemented
 
-**Backend** (`backend/`, Python 3.12 + FastAPI + DuckDB + Pydantic v2):
+**Backend** (`backend/`, Python 3.12 + FastAPI + MySQL + Pydantic v2):
 
 - `app/schemas/query.py` — the semantic layer. `FinancialQuery` with closed
 - `app/schemas/query.py` — the semantic layer. `FinancialQuery` with closed
@@ -69,9 +69,9 @@ reason** instead of guessing. That refusal behaviour is the core thesis:
   coherence (balance intents require the balance metric, comparisons require
   a comparison spec, …).
 - `app/query_engine/` — deterministic **Text-to-SQL** over the **actual TBX
-  schema** (`bank`, `account`, `transaction`). `duckdb_builder.compile_query()`
-  turns a validated `FinancialQuery` into a parameterized DuckDB `SELECT`;
-  `DuckDBQueryEngine` executes it read-only. Joins live in exactly one place;
+  schema** (`bank`, `account`, `transaction`). `mysql_builder.compile_query()`
+  turns a validated `FinancialQuery` into a parameterized MySQL `SELECT`;
+  `MySQLQueryEngine` executes it read-only. Joins live in exactly one place;
   account/balance questions read `account.available_balance` (no fabricated
   balances from transaction sums). Sensitive fields (`account_number`,
   `utr_number`) are masked **at the engine boundary** so nothing downstream
@@ -88,7 +88,7 @@ reason** instead of guessing. That refusal behaviour is the core thesis:
   Indian digit grouping (₹1,24,850).
 - `app/api/routes.py` — REST API: `/api/chat`, `/api/query`, `/api/health`.
 - `tests/` — backend pytest suite (engine, guardrails, understanding, API
-  grounding, query cache) on in-memory DuckDB — no services needed to run
+  grounding, query cache) against seeded MySQL — no services needed to run
   the suite.
 
 **Frontend** (`frontend/`, React 19 + TypeScript + Vite + Tailwind v4):
@@ -103,7 +103,7 @@ from actual execution**, never asserted. `run_eval.py` also records latency
 per provider/model.
 
 **Infra**: `docker-compose.yml` (Redis + backend + nginx-served frontend;
-DuckDB only, no MySQL), `Makefile`, `.env.example`.
+MySQL), `Makefile`, `.env.example`.
 
 ## Verified end-to-end examples
 
@@ -124,16 +124,28 @@ DuckDB only, no MySQL), `Makefile`, `.env.example`.
 
 ## Quick start
 
-### Option A — Docker (everything in one command)
+### Option A — Docker
+
+Production-style build (no source mounts or hot reload):
 
 ```bash
-docker compose up --build -d
+make docker-prod
 # UI:      http://localhost:5173
 # API:     http://localhost:8000/api/health
 ```
 
+Development build with backend hot reload:
+
+```bash
+make docker-dev
+```
+
+The development command bind-mounts `backend/` and reloads Uvicorn whenever
+Python files under `backend/app/` change. The production command builds the
+backend source into its image and runs without the reload watcher.
+
 First boot generates seed CSVs (10 banks, 25 accounts, 8,000 transactions,
-seed=42), builds `finance.duckdb`, and serves the API. Set
+seed=42), loads CSVs into MySQL, and serves the API. Set
 `ANTHROPIC_API_KEY` in `.env` (copy `.env.example`) to enable LLM query
 understanding; without it the deterministic rule-based provider is used and
 all core questions still work.
@@ -146,7 +158,7 @@ cd backend
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 set -a; source ../.env; set +a                 # load repository-root config
-python scripts/load_data.py --generate --data-dir ../data   # build DuckDB
+python scripts/load_data.py --generate --data-dir ../data   # load MySQL
 uvicorn app.main:app --reload --port 8000
 
 # 2. Frontend (new terminal)
@@ -155,8 +167,9 @@ npm install
 npm run dev        # http://localhost:5173, proxies /api → :8000
 ```
 
-Makefile shortcuts: `make docker-up`, `make install`, `make seed`, `make test`,
-`make eval`, `make api`, `make frontend`.
+Makefile shortcuts: `make docker-dev`, `make docker-prod` (`make docker-up` is
+an alias), `make install`, `make seed`, `make test`, `make eval`, `make api`,
+`make frontend`.
 
 ---
 
@@ -185,17 +198,17 @@ truth — surfaced in refusals and covered by tests.
 ```
 backend/
 ├── app/
-│   ├── config.py                  # env settings (provider, model, DuckDB path)
-│   ├── db.py                      # DuckDB bootstrap / read-only connection
+│   ├── config.py                  # env settings (provider, model, MySQL URL)
+│   ├── db.py                      # MySQL bootstrap / connection helpers
 │   ├── models/entities.py         # Bank, Account, Transaction (TBX schema)
 │   ├── schemas/query.py           # ★ the semantic layer (FinancialQuery + refusals)
 │   ├── llm/provider.py            # LLM abstraction (Anthropic | rule-based)
-│   ├── query_engine/              # ★ DuckDB Text-to-SQL compiler + engine + cache
+│   ├── query_engine/              # ★ MySQL Text-to-SQL compiler + engine + cache
 │   ├── conversation/memory.py     # structured multi-turn context
 │   ├── services/                  # seed data, answers (templates), chat service
 │   └── api/                       # FastAPI routes + request/response schemas
-├── scripts/load_data.py           # CSV → DuckDB (synthetic seed OR official data)
-└── tests/                         # pytest on in-memory DuckDB
+├── scripts/load_data.py           # CSV → MySQL (synthetic seed OR official data)
+└── tests/                         # pytest against seeded MySQL
 
 frontend/                          # React chat UI with grounding panel
 evaluation/                        # benchmark.json + run_eval.py + results.json
@@ -227,7 +240,7 @@ zones — **ANSWER**, **HOW I GOT THIS**, and **SOURCE RECORDS**:
     "records_matched": 28,
     "filters": {"transaction_type": "debit"}
   },
-  "source": "DuckDB — TBX financial dataset (bank / account / transaction, deterministic query engine)",
+  "source": "MySQL — TBX financial dataset (bank / account / transaction, deterministic query engine)",
   "grounded": true,
   "records": [ ... up to 15 masked rows ... ]
 }
@@ -373,8 +386,8 @@ from invented tables.
 Per the hackathon scope:
 
 - **LLM-written SQL** — the model never emits SQL strings. It fills a
-  `FinancialQuery` schema. Deterministic **Text-to-SQL** (DSL → DuckDB SQL)
-  is implemented in `app/query_engine/duckdb_builder.py`.
+  `FinancialQuery` schema. Deterministic **Text-to-SQL** (DSL → MySQL SQL)
+  is implemented in `app/query_engine/mysql_builder.py`.
 - **RAG / vector DB / embeddings** — not needed when answers come from
   parameterized queries.
 - **Financial Twin tables** (vendors, invoices, mandates, approvals, …) —
@@ -388,17 +401,17 @@ Per the hackathon scope:
 
 ---
 
-## DuckDB Text-to-SQL backend
+## MySQL Text-to-SQL backend
 
-Runtime is **DuckDB only**. A validated `FinancialQuery` is compiled to a
-parameterized DuckDB `SELECT` and executed read-only. The LLM still never
-writes SQL — compilation lives in `app/query_engine/duckdb_builder.py`.
+Runtime is **MySQL only**. A validated `FinancialQuery` is compiled to a
+parameterized MySQL `SELECT` and executed read-only. The LLM still never
+writes SQL — compilation lives in `app/query_engine/mysql_builder.py`.
 
 ```bash
-# Build / refresh data/finance.duckdb from CSVs (from backend/)
+# Load CSVs into MySQL (from backend/)
 python scripts/load_data.py --generate --data-dir ../data
 
-export ARTHA_DUCKDB_PATH=../data/finance.duckdb   # optional override
+export ARTHA_DATABASE_URL=mysql://artha:artha@127.0.0.1:3306/artha
 uvicorn app.main:app --reload --port 8000
 ```
 

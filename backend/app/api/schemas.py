@@ -59,6 +59,8 @@ class ChatResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     database: Literal["connected", "error"]
+    backend: Literal["mysql"] = "mysql"
+    database_url_masked: str | None = None
     llm_provider: str
     model: str | None
     record_counts: dict[str, int] = Field(default_factory=dict)

@@ -112,7 +112,8 @@ def test_answer_numbers_come_exclusively_from_result(duck_engine):
     tampered_answer = generate_answer(q, tampered)
     assert _value_in_answer(tampered_answer, 999_999_999.0)
     # cache isolation: the tampered object was NOT the cached object
-    assert get_cached_result(q).summary["value"] == real_value
+    cached = get_cached_result(q, scope=getattr(duck_engine, "_cache_scope", None))
+    assert cached is not None and cached.summary["value"] == real_value
 
 
 def _format_check(answer: str) -> str:

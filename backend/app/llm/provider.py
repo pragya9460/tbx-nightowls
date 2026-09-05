@@ -1,13 +1,13 @@
 """LLM abstraction for query understanding.
 
 LLMProvider
-    ├── AnthropicProvider    (claude-haiku-4-5 by default — smallest capable model)
-    └── RuleBasedProvider    (deterministic fallback, no API key needed)
+    ├── OllamaProvider       (local qwen2.5-coder etc. — preferred for hackathon)
+    ├── AnthropicProvider    (claude-haiku — optional cloud)
+    └── RuleBasedProvider    (deterministic fallback, no LLM)
 
 The provider's ONLY job is to map a user question + conversation context to a
-structured query descriptor. It never produces numbers; those come from the
-query engine. It never sees sensitive values (account numbers, UTRs) — the
-engine masks them before anything leaves the database layer.
+structured FinancialQuery JSON. It never produces SQL or numbers; SQL is
+compiled by mysql_builder and numbers come from MySQL.
 """
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from ..schemas.query import (
     Intent,
     Metric,
     QueryFilters,
+    parse_month_vs_month,
     today as app_today,
     resolve_date_range,
 )
@@ -58,13 +59,17 @@ class LLMProvider(ABC):
 # ---------------------------------------------------------------------------
 
 # Domains with NO table in the current schema — refuse, don't guess.
+# Note: "vendor expenses/spend" is supported as debit transaction spend
+# (counterparties live in transaction.description). Only true vendor-ledger
+# questions (owing, vendor master list) are unsupported.
 UNSUPPORTED_DOMAINS = [
     (r"salary|salaries|payroll|employees?|wages?", "employee payroll data"),
     (r"tax(es)?|gst|tds|income tax", "tax data"),
     (r"revenue|sales figures", "revenue/sales data"),
     (r"profit|margin|balance sheet|p&l", "profit/loss data"),
     (r"invoice[s]?\b|overdue|receivable|payable", "invoice or receivables data"),
-    (r"vendors?\b|suppliers?\b|payouts?\b", "vendor or payout data"),
+    (r"owe (vendors?|suppliers?)|vendor (list|master|directory)|supplier (list|master)",
+     "a vendor master / payables ledger"),
     (r"escrow|mandate|beneficiar", "escrow/mandate/beneficiary data"),
     (r"customers?\b|kyc", "customer/KYC data"),
     (r"forecast|projection", "forecasting"),
@@ -76,6 +81,14 @@ _FINANCE_SUGGESTIONS = [
     "How much did I spend last month?",
     "Which bank holds the most money?",
 ]
+
+_VENDOR_MENTION = re.compile(r"\b(vendors?|suppliers?|payouts?)\b")
+_VENDOR_SPEND_CUES = re.compile(
+    r"\b(expense|expenses|spend|spent|spending|paid|payment|payments|cost|costs)\b"
+)
+_VENDOR_BREAKDOWN = re.compile(
+    r"\b(break\s*down|by vendor|per vendor|top vendors?|which vendors?|each vendor)\b"
+)
 
 # Identity / chit-chat — must not fall through to a transaction total.
 _IDENTITY = re.compile(
@@ -161,9 +174,37 @@ class RuleBasedProvider(LLMProvider):
                     provider_used=self.name,
                 )
 
+        # 1a. Vendor/supplier *expenses* → debit transaction spend.
+        # There is no vendor table; counterparties live in transaction.description.
+        if _VENDOR_MENTION.search(q) and (
+            _VENDOR_SPEND_CUES.search(q) or _VENDOR_BREAKDOWN.search(q)
+        ):
+            return self._vendor_expense_intent(q, today)
+
         # 1b. Identity / greetings — never guess a financial total.
         if _IDENTITY.search(q) or _CHITCHAT.search(q):
             return self._off_topic_refusal()
+
+        # 1c. Explicit "July vs August" two-month comparison.
+        pair = parse_month_vs_month(q)
+        if pair and (
+            re.search(r"compare|versus|\bvs\b|expense|spend|spent|paid|debit|credit|received", q)
+        ):
+            m1, m2 = pair
+            txn_type = None
+            if _DEBIT_CUES.search(q) or re.search(r"\bexpense", q):
+                txn_type = "debit"
+            elif _CREDIT_CUES.search(q):
+                txn_type = "credit"
+            filters = self._txn_filters(q, txn_type, None)
+            return self._validated(
+                intent=Intent.COMPARISON,
+                metric=Metric.TRANSACTION_AMOUNT,
+                aggregation=Aggregation.SUM,
+                filters=filters,
+                range_spec={"type": "calendar_month", "month": m1},
+                comparison={"against": "named_month", "month": m2},
+            )
 
         # 2. Reference / UTR lookup — must come before spend detection, and
         #    must use the ORIGINAL question: reference ids and UTRs are
@@ -299,6 +340,31 @@ class RuleBasedProvider(LLMProvider):
         return None
 
     # ----- intent builders ----------------------------------------------------
+
+    def _vendor_expense_intent(self, q: str, today: dt.date) -> QueryUnderstanding:
+        """Map vendor/supplier expense questions onto debit transaction spend.
+
+        No vendor master exists in the TBX schema — we sum (or list) debit
+        transactions for the asked period. Breakdown-by-vendor is answered as
+        a top-description listing (description = counterparty text).
+        """
+        if _VENDOR_BREAKDOWN.search(q):
+            # List recent/large debit counterparties for the period.
+            return self._validated(
+                intent=Intent.TRANSACTION_LIST,
+                metric=Metric.TRANSACTION_AMOUNT,
+                aggregation=Aggregation.NONE,
+                filters={"transaction_type": "debit"},
+                range_spec=self._date_spec(q, today),
+                limit=20,
+            )
+        return self._validated(
+            intent=Intent.TRANSACTION_SUMMARY,
+            metric=Metric.TRANSACTION_AMOUNT,
+            aggregation=Aggregation.SUM,
+            filters={"transaction_type": "debit"},
+            range_spec=self._date_spec(q, today),
+        )
 
     def _balance_intent(self, q: str, context: dict, today: dt.date) -> QueryUnderstanding:
         bank_code = self._extract_bank(q)
@@ -788,6 +854,13 @@ bank_code), and transaction (transaction_id, account_id, transaction_date,
 transaction_type [credit|debit], description, transaction_amount,
 transaction_reference_id, utr_number [sensitive]).
 
+There is NO vendor master / payouts / reconciliation table. Vendor or supplier
+*names* appear inside transaction.description. Treat "vendor expenses",
+"supplier spend", or "payouts" as debit transaction spend (transaction_type
+"debit") for the asked date range. For "break down by vendor" / "top vendors",
+use intent transaction_list with transaction_type debit (descriptions are the
+counterparty). Do NOT refuse those questions as unsupported.
+
 Allowed intents: transaction_summary, transaction_list, top_descriptions,
 monthly_trend, comparison, account_balance, account_list, bank_balance,
 bank_account_count, reference_lookup.
@@ -799,7 +872,8 @@ Rules:
   assistant for your bank accounts and transactions. I can only answer
   questions the current dataset supports."}.
 - If the question needs data outside these tables (payroll, taxes, invoices,
-  vendors, profit, forecasts), refuse: {"refusal": "unsupported", "message": "..."}.
+  vendor master / amounts owed to vendors, profit, forecasts), refuse:
+  {"refusal": "unsupported", "message": "..."}.
 - If the user says "spent" with no qualifier, that maps to transaction_type
   "debit" — do NOT ask for clarification; state the interpretation.
 - If the question is missing the subject entirely (e.g. "how much moved?"),
@@ -814,7 +888,7 @@ Rules:
 - transaction_reference_id and utr_number are DIFFERENT columns. A bare
   "reference number" means transaction_reference_id. Only utr_number when the
   user explicitly says "UTR".
-- "spent"/"debit" → transaction_type "debit"; "received"/"inflow" → "credit".
+- "spent"/"debit"/"expenses" → transaction_type "debit"; "received"/"inflow" → "credit".
 - Balance questions → intent account_balance (or bank_balance with
   group_by ["bank"] for "which bank holds the most", ["account"] for highest
   account) with metric "balance", aggregation "sum" (or "max" for highest).
@@ -827,7 +901,50 @@ Rules:
 - For comparisons ("what about July", "how does that compare"), use intent
   "comparison" with "comparison": {"against": "previous_period"}, reusing
   metric/type from the previous turn given in the context.
-- Output ONLY JSON. No prose, no markdown fences."""
+- For two named months ("July vs August", "compare expenses in july versus
+  august"): intent "comparison", date_range.month = first month, and
+  comparison = {"against": "named_month", "month": "<second month>"}.
+  Do NOT use previous_period for that case.
+- Output ONLY JSON. No prose, no markdown fences.
+
+Example — "What are the expenses for july for vendors":
+{
+  "intent": "transaction_summary",
+  "metric": "transaction_amount",
+  "aggregation": "sum",
+  "filters": {"transaction_type": "debit"},
+  "date_range": {"type": "calendar_month", "month": "july"},
+  "group_by": []
+}
+
+Example — "compare my expense in july vs august":
+{
+  "intent": "comparison",
+  "metric": "transaction_amount",
+  "aggregation": "sum",
+  "filters": {"transaction_type": "debit"},
+  "date_range": {"type": "calendar_month", "month": "july"},
+  "comparison": {"against": "named_month", "month": "august"},
+  "group_by": []
+}
+
+Example — "What is my total available balance?":
+{
+  "intent": "account_balance",
+  "metric": "balance",
+  "aggregation": "sum",
+  "filters": {},
+  "date_range": {"type": "all_time"},
+  "group_by": []
+}
+
+IMPORTANT field names:
+- metric must be exactly one of: transaction_amount, transaction_count, balance
+  (never "amount")
+- date_range is a TOP-LEVEL object (never nested under filters)
+- filters may only contain: bank_code, bank_name, account_id, transaction_type,
+  description_contains, reference_id, utr_number, min_amount, max_amount
+"""
 
 QUERY_JSON_SCHEMA = {
     "type": "object",
@@ -882,10 +999,19 @@ QUERY_JSON_SCHEMA = {
         "limit": {"type": "integer"},
         "comparison": {
             "type": "object",
-            "properties": {"against": {
-                "type": "string",
-                "enum": ["previous_period", "previous_month", "previous_year"],
-            }},
+            "properties": {
+                "against": {
+                    "type": "string",
+                    "enum": [
+                        "previous_period",
+                        "previous_month",
+                        "previous_year",
+                        "named_month",
+                    ],
+                },
+                "month": {"type": "string"},
+                "year": {"type": "integer"},
+            },
             "additionalProperties": False,
         },
     },
@@ -983,14 +1109,141 @@ class AnthropicProvider(LLMProvider):
         )
 
 
+def _extract_json_object(text: str) -> dict:
+    """Parse a JSON object from model output (tolerates markdown fences)."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty model response")
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
+
+
+class OllamaProvider(LLMProvider):
+    """Local LLM via Ollama — generates FinancialQuery JSON (not SQL).
+
+    Matches the architecture: LLM understands NL → structured query; the
+    deterministic Text-to-SQL compiler turns that into SQL.
+    """
+
+    name = "ollama"
+
+    def __init__(
+        self,
+        model: str,
+        base_url: str | None = None,
+        timeout: float = 60.0,
+    ):
+        self.model = model
+        self.base_url = (base_url or "http://127.0.0.1:11434").rstrip("/")
+        self.timeout = timeout
+
+    def understand(self, question: str, context: dict | None = None) -> QueryUnderstanding:
+        import urllib.error
+        import urllib.request
+
+        context = context or {}
+        started = time.monotonic()
+
+        context_block = ""
+        if context and context.get("last_intent"):
+            context_block = (
+                "\nPrevious turn context (use for follow-ups):\n"
+                + json.dumps(context, default=str)
+            )
+
+        user_content = (
+            f"{context_block}\n\nQuestion: {question}\n\n"
+            "Respond with ONLY a single JSON object matching the schema. "
+            "No markdown, no explanation."
+        )
+        payload = {
+            "model": self.model,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.0, "num_predict": 512},
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+        }
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            return QueryUnderstanding(
+                refusal_reason="unsupported",
+                refusal_message=(
+                    "The local LLM (Ollama) is unavailable. "
+                    f"Start Ollama and pull the model, or set ARTHA_LLM_PROVIDER=rule_based. "
+                    f"({type(e).__name__}: {e})"
+                ),
+                provider_used=self.name,
+                model_used=self.model,
+                latency_ms=int((time.monotonic() - started) * 1000),
+            )
+
+        text = (body.get("message") or {}).get("content") or body.get("response") or ""
+        latency = int((time.monotonic() - started) * 1000)
+
+        try:
+            data = _extract_json_object(text)
+        except Exception:
+            return QueryUnderstanding(
+                refusal_reason="unsupported",
+                refusal_message="I couldn't interpret that question reliably.",
+                provider_used=self.name,
+                model_used=self.model,
+                latency_ms=latency,
+            )
+
+        if data.get("refusal"):
+            return QueryUnderstanding(
+                refusal_reason=data["refusal"],
+                refusal_message=data.get("message", "I can't answer that."),
+                provider_used=self.name,
+                model_used=self.model,
+                latency_ms=latency,
+            )
+
+        # Drop non-schema keys some models add
+        data.pop("message", None)
+        return QueryUnderstanding(
+            query=data,
+            provider_used=self.name,
+            model_used=self.model,
+            latency_ms=latency,
+        )
+
+
 def build_provider(
     provider_name: str, api_key: str, model: str,
     vendor_names: list[str] | None = None,
     max_retries: int = 1, timeout: float = 30.0,
+    ollama_base_url: str | None = None,
 ) -> LLMProvider:
     if provider_name == "anthropic":
         return AnthropicProvider(api_key=api_key, model=model,
                                  max_retries=max_retries, timeout=timeout)
+    if provider_name == "ollama":
+        return OllamaProvider(
+            model=model,
+            base_url=ollama_base_url,
+            timeout=timeout,
+        )
     if provider_name == "rule_based":
         return RuleBasedProvider()
     raise ValueError(f"unknown provider: {provider_name}")

@@ -8,7 +8,7 @@
     "avg_latency_ms": 0.1,
     "total_tokens": null,
     "failure_categories": null,
-    "ran_at": "2026-09-05T08:05:07.334439+00:00"
+    "ran_at": "2026-09-05T08:33:10.395875+00:00"
   },
   "results": [
     {
@@ -390,9 +390,9 @@
     },
     {
       "question": "How much did we spend on vendor payouts?",
-      "expected_intent": null,
-      "got_intent": null,
-      "refusal_reason": "unsupported",
+      "expected_intent": "transaction_summary",
+      "got_intent": "transaction_summary",
+      "refusal_reason": null,
       "failures": [],
       "failure_category": null,
       "passed": true,

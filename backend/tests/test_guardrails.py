@@ -30,6 +30,7 @@ def u(question: str, context=None):
     ("What is my profit margin?", "profit"),
     ("Which invoices are overdue?", "invoice"),
     ("How much do I owe vendors?", "vendor"),
+    ("Show the vendor master list", "vendor"),
     ("Show my escrow mandates", "escrow"),
     ("List my customers", "customer"),
     ("Forecast my spend next quarter", "forecast"),

@@ -5,8 +5,8 @@ Usage:
     python evaluation/run_eval.py --provider rule_based
     python evaluation/run_eval.py --provider anthropic --model claude-haiku-4-5
 
-Needs ``ARTHA_DUCKDB_PATH`` (or default ``data/finance.duckdb``) with seed data
-loaded via ``python scripts/load_data.py --generate``. The benchmark JSON
+Needs ``ARTHA_DATABASE_URL`` (default ``mysql://artha:artha@127.0.0.1:3306/artha``)
+with seed data loaded via ``python scripts/load_data.py``. The benchmark JSON
 (benchmark.json) drives intent/filter/date/refusal checks; accuracy is
 COMPUTED from actual execution — never faked. Scores are written to
 evaluation/results.json.

@@ -28,13 +28,38 @@ def test_health_endpoint(client, duckdb_file):
     body = resp.json()
     assert body["status"] in ("ok", "degraded")
     assert body["database"] == "connected"
+    assert body["backend"] == "mysql"
     assert body["record_counts"]["transaction"] > 0
     assert body["record_counts"]["account"] > 0
     assert body["record_counts"]["bank"] > 0
 
 
+def test_database_settings_override(client, duckdb_file):
+    cid = "settings-test-1"
+    # Clear to default
+    r0 = client.post("/api/settings/database", json={
+        "conversation_id": cid, "database_url": None,
+    })
+    assert r0.status_code == 200
+    assert r0.json()["using_session_override"] is False
+
+    # Same URL as env should connect
+    from app import config
+    r1 = client.post("/api/settings/database", json={
+        "conversation_id": cid,
+        "database_url": config.DATABASE_URL,
+    })
+    assert r1.status_code == 200
+    assert r1.json()["using_session_override"] is True
+    assert "***" in r1.json()["database_url_masked"]
+
+    r2 = client.get(f"/api/settings/database/{cid}")
+    assert r2.status_code == 200
+    assert r2.json()["using_session_override"] is True
+
+
 def test_chat_debit_spend_grounded(client, duck_engine):
-    """'How much did I spend last month?' → debit sum that equals DuckDB."""
+    """'How much did I spend last month?' → debit sum that equals MySQL."""
     resp = client.post("/api/chat", json={
         "question": "How much did I spend last month?",
     })
@@ -43,7 +68,7 @@ def test_chat_debit_spend_grounded(client, duck_engine):
     assert body["refusal"] is None
     assert "debit" in body["answer"].lower() or "spent" in body["answer"].lower()
     assert body["meta"]["grounded"] is True
-    assert body["meta"].get("backend") == "duckdb"
+    assert body["meta"].get("backend") == "mysql"
     assert body["evidence"]["how_calculated"]["filters"].get("transaction_type") == "debit"
     assert body["evidence"]["how_calculated"]["records_matched"] >= 0
     assert "sql" in body["evidence"]["how_calculated"]
@@ -52,16 +77,18 @@ def test_chat_debit_spend_grounded(client, duck_engine):
     first_of_current = today.replace(day=1)
     last_month_end = first_of_current - dt.timedelta(days=1)
     last_month_start = last_month_end.replace(day=1)
-    expected_n = duck_engine._con.execute(
-        """
-        SELECT COUNT(DISTINCT t.transaction_id)
-        FROM "transaction" t
-        WHERE t.transaction_type = 'debit'
-          AND CAST(t.transaction_date AS DATE) >= ?
-          AND CAST(t.transaction_date AS DATE) <= ?
-        """,
-        [last_month_start.isoformat(), last_month_end.isoformat()],
-    ).fetchone()[0]
+    with duck_engine._con.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT t.transaction_id) AS cnt
+            FROM `transaction` t
+            WHERE t.transaction_type = 'debit'
+              AND DATE(t.transaction_date) >= %s
+              AND DATE(t.transaction_date) <= %s
+            """,
+            (last_month_start.isoformat(), last_month_end.isoformat()),
+        )
+        expected_n = cur.fetchone()["cnt"]
     assert body["evidence"]["how_calculated"]["records_matched"] == expected_n
 
 
@@ -69,9 +96,9 @@ def test_chat_total_balance_grounded(client, duck_engine):
     resp = client.post("/api/chat", json={"question": "What is my total available balance?"})
     body = resp.json()
     assert body["refusal"] is None
-    expected = duck_engine._con.execute(
-        "SELECT SUM(available_balance) FROM account"
-    ).fetchone()[0]
+    with duck_engine._con.cursor() as cur:
+        cur.execute("SELECT SUM(available_balance) AS total FROM account")
+        expected = cur.fetchone()["total"]
     assert "₹" in body["answer"]
     assert body["evidence"]["how_calculated"]["operation"] == "SUM(balance)"
     assert body["evidence"]["summary"]["value"] == pytest.approx(float(expected), rel=1e-6)
@@ -146,7 +173,7 @@ def test_direct_query_endpoint_no_llm(client, duck_engine):
     assert body["refusal"] is None
     assert body["meta"]["provider"] == "none"
     assert body["meta"]["grounded"] is True
-    assert body["meta"].get("backend") == "duckdb"
+    assert body["meta"].get("backend") == "mysql"
 
     expected = duck_engine.execute(FinancialQuery.model_validate({
         "intent": "transaction_summary",
@@ -190,6 +217,21 @@ def test_multiturn_comparison(client, duckdb_file):
     assert b2["query"]["filters"].get("transaction_type") == "debit"
     assert "vs" in b2["answer"].lower() and "₹" in b2["answer"]
     assert b2["evidence"]["comparison"]["how_calculated"]["date_range"] == "Jul 2026"
+
+
+def test_july_vs_august_chat(client, duckdb_file):
+    r = client.post("/api/chat", json={
+        "question": "compare my expense in july vs august",
+        "conversation_id": "jul-aug",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["refusal"] is None
+    assert body["query"]["intent"] == "comparison"
+    assert body["query"]["date_range"]["label"] == "Jul 2026"
+    assert body["query"]["comparison"]["against"] == "named_month"
+    assert body["evidence"]["comparison"]["how_calculated"]["date_range"] == "Aug 2026"
+    assert "Jul 2026" in body["answer"] and "Aug 2026" in body["answer"]
 
 
 def test_multiturn_month_swap(client):

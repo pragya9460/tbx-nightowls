@@ -1,1 +1,7 @@
-from .provider import LLMProvider, RuleBasedProvider, build_provider, QueryUnderstanding  # noqa: F401
+from .provider import (  # noqa: F401
+    LLMProvider,
+    OllamaProvider,
+    RuleBasedProvider,
+    build_provider,
+    QueryUnderstanding,
+)

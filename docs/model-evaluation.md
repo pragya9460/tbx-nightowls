@@ -52,8 +52,8 @@ prompt quality and validation strictness are.
 |---|---|
 | Resolve every date range to absolute dates (IST clock, fixed grammar) | `schemas/query.resolve_date_range` |
 | Validate/reject the draft query (closed enums, `extra="forbid"`, SQL-token screening) | `schemas/query.FinancialQuery` |
-| Compile to SQL (deterministic text-to-SQL; sqlglot-verified single SELECT, parameter-bound) | `query_engine/duckdb_builder.py` |
-| Execute, aggregate, sort, limit in DuckDB | `query_engine/duckdb_engine.py` |
+| Compile to SQL (deterministic text-to-SQL; single SELECT, parameter-bound) | `query_engine/mysql_builder.py` |
+| Execute, aggregate, sort, limit in MySQL (read-only session) | `query_engine/mysql_engine.py` |
 | Mask `account_number` / `utr_number` | engine boundary |
 | Compute totals, peaks, comparisons, percentages | engine + `services/answers.py` |
 | Render the answer sentence | deterministic templates |
